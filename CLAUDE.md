@@ -42,18 +42,29 @@ mode at that commit. `cmake/KrnEngine.cmake` fetches it and fails the configure 
 A bump is one diff: the new SHA, plus `KRN_DATA_KRN_TARGETS` if the engine's consumed-mode
 targets changed at it.
 
-Unmerged engine work: `-DFETCHCONTENT_SOURCE_DIR_KRN=<krn checkout>` builds against that
-tree. The configure prints a warning naming its `HEAD` and whether it is dirty, because
-the pin is then not what is compiled. Never share `FETCHCONTENT_BASE_DIR` across build
-trees or worktrees; the configure refuses one outside the build dir.
-
 krn-data does not depend on `krn-common` (SPEC D9, amended). If it ever does, the edge
 runs krn-data → krn-common, never the reverse.
+
+## Override: unmerged engine work
+
+`-DFETCHCONTENT_SOURCE_DIR_KRN=<krn checkout>` builds against that tree; nothing is written
+into it. The configure prints a warning naming its `HEAD` and whether it is clean or has
+uncommitted changes, because the pin is then not what is compiled.
+
+## FETCHCONTENT_BASE_DIR
+
+Never share it across build trees or worktrees: a shared one is a green build against
+another ticket's engine (SPEC D5). The configure refuses one outside the build dir.
+
+## D17: importing from the engine repo
+
+Code from krn comes in verbatim from a named krn commit, recorded in the commit message
+and as the pin. The only edits allowed in an import are build glue (this repo's CMake, the
+`FetchContent` block, include roots), listed in the ticket. No history graft
+(`git subtree`, `filter-repo`, merges of krn history). From the import until krn deletes its
+copy, krn's copy is frozen, and the deletion's acceptance is an empty `diff -r`.
 
 ## Rules
 
 - `LICENSE` is the root commit, unchanged. Add no other licence file or SPDX header.
-- Code from the engine repo comes in verbatim from a named krn commit, recorded in the
-  commit message (SPEC D17). The only edits allowed in an import are build glue. No
-  history graft (`git subtree`, `filter-repo`, merges of krn history).
 - Default branch `main`. One Linear `ENC` ticket per branch.
