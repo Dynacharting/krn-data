@@ -5,7 +5,9 @@
 # Unmerged engine work: -DFETCHCONTENT_SOURCE_DIR_KRN=<krn checkout> builds
 # against that tree instead of the pin. Nothing is written into it.
 
-if (NOT KRN_DATA_KRN_COMMIT MATCHES "^[0-9a-f]{40}$")
+# CMake regexes have no {n} repetition, so the length is checked separately.
+string(LENGTH "${KRN_DATA_KRN_COMMIT}" _kd_len)
+if (NOT _kd_len EQUAL 40 OR NOT KRN_DATA_KRN_COMMIT MATCHES "^[0-9a-f]+$")
   message(FATAL_ERROR
     "krn-data: KRN_DATA_KRN_COMMIT must be a full 40-character commit, "
     "got '${KRN_DATA_KRN_COMMIT}'")
