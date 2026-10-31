@@ -252,3 +252,4 @@
 [ 82%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_simd_avx512.cc.o
 [ 82%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/compression_lz4.cc.o
 [ 83%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/compression_zstd.cc.o
+[ 83%] Built target arrow_util
