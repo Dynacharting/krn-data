@@ -95,3 +95,31 @@
 [ 30%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriShorten.c.o
 [ 30%] Built target arrow_vendored
 [ 31%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/transform.cc.o
+[ 31%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/api_scalar.cc.o
+[ 31%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[ 31%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_run_end.cc.o
+[ 31%] Built target arrow_io
+[ 32%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Aggregate.cpp.o
+[ 32%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/AtomicAccessor.cpp.o
+[ 32%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/BucketTime.cpp.o
+[ 32%] Built target arrow_ipc
+[ 33%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Expr.cpp.o
+[ 33%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_adaptive.cc.o
+[ 33%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Field.cpp.o
+[ 33%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 33%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Filter.cpp.o
+[ 34%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/api_vector.cc.o
+[ 35%] Linking CXX static library ../../../lib/libgtest_main.a
+[ 35%] Built target gtest_main
+[ 36%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_base.cc.o
+[ 37%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/GroupSplit.cpp.o
+[ 37%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/cast.cc.o
+[ 37%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_binary.cc.o
+[ 37%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Interval.cpp.o
+[ 38%] Linking CXX static library ../../../lib/libgmock.a
+[ 38%] Built target gmock
+[ 38%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[ 38%] Linking CXX static library ../../../lib/libgmock_main.a
+[ 38%] Built target gmock_main
+[ 39%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/exec.cc.o
+[ 39%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Listener.cpp.o
