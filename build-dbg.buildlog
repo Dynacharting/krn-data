@@ -35,3 +35,75 @@
 [ 11%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_memory_pool.dir/memory_pool.cc.o
 [ 12%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/BuiltinFunctions.cpp.o
 [ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/compressed.cc.o
+-- zstd_ep configure command succeeded.  See also /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build-dbg/_deps/arrow-build/zstd_ep-prefix/src/zstd_ep-stamp/zstd_ep-configure-*.log
+[ 13%] Performing build step for 'zstd_ep'
+[ 13%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/Dispatcher.cpp.o
+[ 13%] Built target arrow_memory_pool
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_binary.cc.o
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/metadata_internal.cc.o
+[ 13%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/DispatcherRecord.cpp.o
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/file.cc.o
+[ 13%] Linking CXX static library ../../../lib/libgtest.a
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_decimal.cc.o
+[ 14%] Built target gtest
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_dict.cc.o
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_nested.cc.o
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/options.cc.o
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/base64.cpp.o
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/datetime.cpp.o
+[ 15%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/hdfs.cc.o
+[ 16%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_primitive.cc.o
+[ 17%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/Expr.cpp.o
+[ 18%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/reader.cc.o
+[ 18%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/hdfs_internal.cc.o
+[ 18%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/writer.cc.o
+[ 19%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/bignum-dtoa.cc.o
+[ 19%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/FunctionMap.cpp.o
+[ 19%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/bignum.cc.o
+[ 19%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/cached-powers.cc.o
+[ 19%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/api_aggregate.cc.o
+[ 20%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/double-to-string.cc.o
+[ 20%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/interfaces.cc.o
+[ 20%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/JsonValidator.cpp.o
+[ 20%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/fast-dtoa.cc.o
+[ 21%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/fixed-dtoa.cc.o
+[ 21%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/string-to-double.cc.o
+[ 21%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_run_end.cc.o
+[ 21%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/double-conversion/strtod.cc.o
+[ 22%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/musl/strptime.c.o
+[ 22%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriCommon.c.o
+[ 23%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/RequestRegistry.cpp.o
+[ 23%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriCompare.c.o
+[ 24%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriEscape.c.o
+[ 24%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriFile.c.o
+[ 24%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriIp4.c.o
+[ 25%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriIp4Base.c.o
+[ 25%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriMemory.c.o
+[ 25%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriNormalize.c.o
+[ 26%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriNormalizeBase.c.o
+[ 26%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriParse.c.o
+[ 27%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/memory.cc.o
+[ 28%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriParseBase.c.o
+[ 28%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriQuery.c.o
+[ 28%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriRecompose.c.o
+[ 28%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_adaptive.cc.o
+[ 28%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/TreeBuilder.cpp.o
+[ 29%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriResolve.c.o
+[ 29%] Building C object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/uriparser/UriShorten.c.o
+[ 29%] Built target arrow_vendored
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_base.cc.o
+-- zstd_ep build command succeeded.  See also /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build-dbg/_deps/arrow-build/zstd_ep-prefix/src/zstd_ep-stamp/zstd_ep-build-*.log
+[ 30%] Performing install step for 'zstd_ep'
+-- zstd_ep install command succeeded.  See also /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build-dbg/_deps/arrow-build/zstd_ep-prefix/src/zstd_ep-stamp/zstd_ep-install-*.log
+[ 30%] Completed 'zstd_ep'
+[ 30%] Built target zstd_ep
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/api_scalar.cc.o
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/slow.cc.o
+[ 30%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/data/SymbolTable.cpp.o
+[ 30%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/stdio.cc.o
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_binary.cc.o
+[ 30%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_decimal.cc.o
+[ 31%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/engine/IEventComputer.cpp.o
+[ 32%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/transform.cc.o
+[ 32%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/forum/ConnectorsClient.cpp.o
