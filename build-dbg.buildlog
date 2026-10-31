@@ -284,3 +284,27 @@
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/visitor.cc.o
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/bridge.cc.o
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/dlpack.cc.o
+[ 93%] Built target arrow_objlib
+[ 94%] Linking CXX static library ../../debug/libarrow.a
+[ 94%] Built target arrow_static
+[ 94%] Building CXX object data/CMakeFiles/krn_data.dir/src/DbnEncoder.cpp.o
+[ 94%] Building CXX object data/CMakeFiles/krn_data.dir/src/DatabentoCsv.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/Schema.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/DatabentoAdapter.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/Verdict.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/ClickHouseHttp.cpp.o
+[ 96%] Building CXX object data/CMakeFiles/krn_data.dir/src/TickRecord.cpp.o
+[ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestWindows.cpp.o
+[ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestJob.cpp.o
+[ 97%] Linking CXX static library libkrn_data.a
+[ 97%] Built target krn_data
+[ 97%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/RecordIngressParityTest.cpp.o
+[ 97%] Building CXX object data/CMakeFiles/krn_ingest.dir/tools/krn_ingest_main.cpp.o
+[ 98%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/DatabentoAdapterTest.cpp.o
+[ 98%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/DatabentoCsvTest.cpp.o
+[ 98%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/FixedPointTest.cpp.o
+[ 99%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/IngestWindowsTest.cpp.o
+[100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/SchemaRoundTripTest.cpp.o
+[100%] Linking CXX executable krn_ingest
+[100%] Built target krn_ingest
+[100%] Linking CXX executable krn_data_tests
