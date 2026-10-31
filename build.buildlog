@@ -148,3 +148,22 @@
 [ 46%] Completed 'zstd_ep'
 [ 46%] Built target zstd_ep
 [ 47%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_nested.cc.o
+[ 47%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/server/WebSocketServer.cpp.o
+[ 48%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Config.cpp.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_primitive.cc.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/align_util.cc.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/chunked_internal.cc.o
+[ 48%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Logger.cpp.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_union.cc.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/codegen_internal.cc.o
+[ 48%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Metrics.cpp.o
+[ 49%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/ClientConnection.cpp.o
+[ 49%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/async_util.cc.o
+[ 50%] Bundling /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build/_deps/arrow-build/release/libarrow_bundled_dependencies.a
+[ 50%] Built target arrow_bundled_dependencies_merge
+[ 50%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/WSResponder.cpp.o
+[ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_boolean.cc.o
+[ 51%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/WsBridge.cpp.o
+[ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_dictionary.cc.o
+[ 52%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/concatenate.cc.o
+[ 52%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/data.cc.o
