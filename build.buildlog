@@ -296,3 +296,13 @@
 [ 96%] Building CXX object data/CMakeFiles/krn_data.dir/src/DbnEncoder.cpp.o
 [ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestWindows.cpp.o
 [ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestJob.cpp.o
+[ 97%] Linking CXX static library libkrn_data.a
+[ 97%] Built target krn_data
+[ 97%] Building CXX object data/CMakeFiles/krn_ingest.dir/tools/krn_ingest_main.cpp.o
+[ 98%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/DatabentoAdapterTest.cpp.o
+[ 98%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/FixedPointTest.cpp.o
+[ 99%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/IngestWindowsTest.cpp.o
+[100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/SchemaRoundTripTest.cpp.o
+[100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/RecordIngressParityTest.cpp.o
+[100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/DatabentoCsvTest.cpp.o
+[100%] Linking CXX executable krn_ingest
