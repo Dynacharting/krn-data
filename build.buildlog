@@ -180,3 +180,13 @@
 [ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_run_reader.cc.o
 [ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/util.cc.o
 [ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_util.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_temporal.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/validate.cc.o
+[ 58%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap_builders.cc.o
+[ 58%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap_ops.cc.o
+[ 59%] Linking CXX static library libkrn_engine.a
+[ 59%] Built target krn_engine
+[ 60%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking.cc.o
+[ 60%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_scalar.cc.o
+[ 61%] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/ReferenceComputer.cpp.o
