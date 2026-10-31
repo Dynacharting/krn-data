@@ -107,3 +107,60 @@
 [ 31%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/engine/IEventComputer.cpp.o
 [ 32%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/transform.cc.o
 [ 32%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/forum/ConnectorsClient.cpp.o
+[ 32%] Built target arrow_ipc
+[ 32%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 32%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/align_util.cc.o
+[ 33%] Linking CXX static library ../../../lib/libgmock.a
+[ 34%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Aggregate.cpp.o
+[ 34%] Built target gmock
+[ 35%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/api_vector.cc.o
+[ 36%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_dict.cc.o
+[ 36%] Built target arrow_io
+[ 36%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/cast.cc.o
+[ 37%] Linking CXX static library ../../../lib/libgtest_main.a
+[ 37%] Built target gtest_main
+[ 37%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/async_util.cc.o
+[ 37%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/AtomicAccessor.cpp.o
+[ 37%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/BucketTime.cpp.o
+[ 38%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Expr.cpp.o
+[ 39%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/atfork_internal.cc.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/exec.cc.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/basic_decimal.cc.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_run_end.cc.o
+[ 40%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Field.cpp.o
+[ 40%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Filter.cpp.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_block_counter.cc.o
+[ 41%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/GroupSplit.cpp.o
+[ 42%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_nested.cc.o
+[ 43%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_run_reader.cc.o
+[ 44%] Bundling /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build-dbg/_deps/arrow-build/debug/libarrow_bundled_dependencies.a
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_primitive.cc.o
+[ 44%] Built target arrow_bundled_dependencies_merge
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_union.cc.o
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_util.cc.o
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/expression.cc.o
+[ 44%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap.cc.o
+[ 45%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/concatenate.cc.o
+[ 45%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Interval.cpp.o
+[ 46%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap_builders.cc.o
+[ 46%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/function.cc.o
+[ 46%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bitmap_ops.cc.o
+[ 46%] Linking CXX static library ../../../lib/libgmock_main.a
+[ 46%] Built target gmock_main
+[ 47%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking.cc.o
+[ 47%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/data.cc.o
+[ 47%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_scalar.cc.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/function_internal.cc.o
+[ 48%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernel.cc.o
+[ 48%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Listener.cpp.o
+[ 49%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Pack.cpp.o
+[ 49%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/diff.cc.o
+[ 49%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/ordering.cc.o
+[ 49%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_simd_default.cc.o
+[ 50%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/byte_size.cc.o
+[ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/registry.cc.o
+[ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/chunked_internal.cc.o
+[ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/codegen_internal.cc.o
+[ 51%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Responder.cpp.o
+[ 52%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/statistics.cc.o
