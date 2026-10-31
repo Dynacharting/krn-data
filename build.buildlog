@@ -214,3 +214,18 @@
 [ 68%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/delimiting.cc.o
 [ 68%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/dict_util.cc.o
 [ 69%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/fixed_width_internal.cc.o
+[ 69%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection_take_internal.cc.o
+[ 70%] Linking CXX static library libkrn_plugin_reference.a
+[ 70%] Built target krn_plugin_reference
+[ 70%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/float16.cc.o
+[ 70%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/formatting.cc.o
+[ 71%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_swizzle.cc.o
+[ 72%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/future.cc.o
+[ 72%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/fuzz_internal.cc.o
+[ 72%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/hashing.cc.o
+[ 73%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/int_util.cc.o
+[ 73%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/io_util.cc.o
+[ 73%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/list_util.cc.o
+[ 74%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/logger.cc.o
+[ 74%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/logging.cc.o
+[ 74%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/key_value_metadata.cc.o
