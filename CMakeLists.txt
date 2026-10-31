@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(KRN_DATA LANGUAGES CXX)
 
+# ---- Default build type (ENC-1586, as krn ENC-1548) ----
+# An empty CMAKE_BUILD_TYPE breaks the fetched Arrow's configure (an unquoted
+# string(TOLOWER ${CMAKE_BUILD_TYPE} ...)), so default it to Release, as krn
+# does. Single-config only; a non-empty -DCMAKE_BUILD_TYPE always wins.
+get_property(_kd_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if (NOT _kd_multi_config AND "${CMAKE_BUILD_TYPE}" STREQUAL "")
+  set(CMAKE_BUILD_TYPE Release CACHE STRING
+    "Build type (single-config generators). Defaulted to Release when empty." FORCE)
+  message(STATUS "krn-data: CMAKE_BUILD_TYPE was empty, defaulted to Release")
+endif()
+
 # krn-data's own options are spelled KRN_DATA_BUILD_* and KRN_DATA_KRN_*.
 # Never KRN_BUILD_*, which the engine reads, and never KRN_DATA_ARROW_*,
 # KRN_DATA_DBN_* or KRN_DATA_TEST_*, which the engine's data/ already uses.
