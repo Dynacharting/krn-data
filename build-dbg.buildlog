@@ -308,3 +308,4 @@
 [100%] Linking CXX executable krn_ingest
 [100%] Built target krn_ingest
 [100%] Linking CXX executable krn_data_tests
+[100%] Built target krn_data_tests
