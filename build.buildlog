@@ -275,3 +275,12 @@
 [ 89%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/status.cc.o
 [ 90%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/table.cc.o
 [ 90%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/table_builder.cc.o
+[ 90%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/tensor.cc.o
+[ 91%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/tensor/coo_converter.cc.o
+[ 91%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/tensor/csf_converter.cc.o
+[ 91%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/tensor/csx_converter.cc.o
+[ 92%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/type.cc.o
+[ 92%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/type_traits.cc.o
+[ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/visitor.cc.o
+[ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/bridge.cc.o
+[ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/dlpack.cc.o
