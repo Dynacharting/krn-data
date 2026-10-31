@@ -1,0 +1,443 @@
+Running main() from /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 169 tests from 33 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from DbnEncoderTest
+[ RUN      ] DbnEncoderTest.EncoderReproducesEveryFixtureByteForByte
+[       OK ] DbnEncoderTest.EncoderReproducesEveryFixtureByteForByte (0 ms)
+[ RUN      ] DbnEncoderTest.BuildWritesTheHundredByteFixedBlockInEveryVersion
+[       OK ] DbnEncoderTest.BuildWritesTheHundredByteFixedBlockInEveryVersion (0 ms)
+[ RUN      ] DbnEncoderTest.FixturesAreTheBytesProvenanceSays
+[       OK ] DbnEncoderTest.FixturesAreTheBytesProvenanceSays (0 ms)
+[----------] 3 tests from DbnEncoderTest (0 ms total)
+
+[----------] 2 tests from DbnPriceTest
+[ RUN      ] DbnPriceTest.FixturePricesAreExactIntegersAtTheGlobalScale
+[       OK ] DbnPriceTest.FixturePricesAreExactIntegersAtTheGlobalScale (0 ms)
+[ RUN      ] DbnPriceTest.UndefPriceBecomesKNoPriceAndNeverZero
+[       OK ] DbnPriceTest.UndefPriceBecomesKNoPriceAndNeverZero (0 ms)
+[----------] 2 tests from DbnPriceTest (0 ms total)
+
+[----------] 14 tests from DbnActionMappingTest
+[ RUN      ] DbnActionMappingTest.EveryDeclaredActionIsAcceptedAndMapsLikeItchAdapter
+[       OK ] DbnActionMappingTest.EveryDeclaredActionIsAcceptedAndMapsLikeItchAdapter (0 ms)
+[ RUN      ] DbnActionMappingTest.EveryDeclaredSideIsAccepted
+[       OK ] DbnActionMappingTest.EveryDeclaredSideIsAccepted (0 ms)
+[ RUN      ] DbnActionMappingTest.EveryDeclaredRTypeIsAccepted
+[       OK ] DbnActionMappingTest.EveryDeclaredRTypeIsAccepted (0 ms)
+[ RUN      ] DbnActionMappingTest.AnUndeclaredActionSideOrRTypeIsRefused
+[       OK ] DbnActionMappingTest.AnUndeclaredActionSideOrRTypeIsRefused (0 ms)
+[ RUN      ] DbnActionMappingTest.CancelIsADeltaResolvedAgainstTheRestingSize
+[       OK ] DbnActionMappingTest.CancelIsADeltaResolvedAgainstTheRestingSize (0 ms)
+[ RUN      ] DbnActionMappingTest.ACancelForAnUnseenOrderIsAFullDeleteAndIsCounted
+[       OK ] DbnActionMappingTest.ACancelForAnUnseenOrderIsAFullDeleteAndIsCounted (0 ms)
+[ RUN      ] DbnActionMappingTest.ModifyIsOneUpdateKeepingTheOrderId
+[       OK ] DbnActionMappingTest.ModifyIsOneUpdateKeepingTheOrderId (0 ms)
+[ RUN      ] DbnActionMappingTest.ATradeOrFillNeverConsumesTheBook
+[       OK ] DbnActionMappingTest.ATradeOrFillNeverConsumesTheBook (0 ms)
+[ RUN      ] DbnActionMappingTest.FillMutatesTheBookOnlyWhenConfiguredTo
+[       OK ] DbnActionMappingTest.FillMutatesTheBookOnlyWhenConfiguredTo (0 ms)
+[ RUN      ] DbnActionMappingTest.ATradeSideIsTheAggressorAndAFillSideIsFlipped
+[       OK ] DbnActionMappingTest.ATradeSideIsTheAggressorAndAFillSideIsFlipped (0 ms)
+[ RUN      ] DbnActionMappingTest.EveryBookMutationRowCarriesTheRestingSide
+[       OK ] DbnActionMappingTest.EveryBookMutationRowCarriesTheRestingSide (0 ms)
+[ RUN      ] DbnActionMappingTest.ActionNoneIsAcceptedAndProducesNoBookRow
+[       OK ] DbnActionMappingTest.ActionNoneIsAcceptedAndProducesNoBookRow (0 ms)
+[ RUN      ] DbnActionMappingTest.ClearBumpsTheEpochAndDropsTrackedOrders
+[       OK ] DbnActionMappingTest.ClearBumpsTheEpochAndDropsTrackedOrders (0 ms)
+[ RUN      ] DbnActionMappingTest.TheOrderMapIsBounded
+[       OK ] DbnActionMappingTest.TheOrderMapIsBounded (0 ms)
+[----------] 14 tests from DbnActionMappingTest (0 ms total)
+
+[----------] 1 test from DbnGatewayTest
+[ RUN      ] DbnGatewayTest.ChannelIdAndTsInDeltaAreDecodedAtTheRightOffsets
+[       OK ] DbnGatewayTest.ChannelIdAndTsInDeltaAreDecodedAtTheRightOffsets (0 ms)
+[----------] 1 test from DbnGatewayTest (0 ms total)
+
+[----------] 13 tests from DbnFramingTest
+[ RUN      ] DbnFramingTest.APartialRecordAtTheEndOfTheStreamIsAGap
+[       OK ] DbnFramingTest.APartialRecordAtTheEndOfTheStreamIsAGap (0 ms)
+[ RUN      ] DbnFramingTest.AStreamThatEndsInsideItsMetadataIsRefused
+[       OK ] DbnFramingTest.AStreamThatEndsInsideItsMetadataIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.AZstdFrameIsNamedRatherThanMisparsed
+[       OK ] DbnFramingTest.AZstdFrameIsNamedRatherThanMisparsed (0 ms)
+[ RUN      ] DbnFramingTest.NonDbnMagicIsRefused
+[       OK ] DbnFramingTest.NonDbnMagicIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.AnUnknownDbnVersionIsRefused
+[       OK ] DbnFramingTest.AnUnknownDbnVersionIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.ARefusalPoisonsTheAdapter
+[       OK ] DbnFramingTest.ARefusalPoisonsTheAdapter (0 ms)
+[ RUN      ] DbnFramingTest.TsOutIsRefusedRatherThanMisread
+[       OK ] DbnFramingTest.TsOutIsRefusedRatherThanMisread (0 ms)
+[ RUN      ] DbnFramingTest.AWrongRecordLengthIsRefused
+[       OK ] DbnFramingTest.AWrongRecordLengthIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.ARecordShorterThanItsHeaderIsRefused
+[       OK ] DbnFramingTest.ARecordShorterThanItsHeaderIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.AMetadataLengthShorterThanTheFixedBlockIsRefused
+[       OK ] DbnFramingTest.AMetadataLengthShorterThanTheFixedBlockIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.AMetadataLengthThatCutsTheVariableSectionIsRefused
+[       OK ] DbnFramingTest.AMetadataLengthThatCutsTheVariableSectionIsRefused (0 ms)
+[ RUN      ] DbnFramingTest.TheMetadataTailIsOnlyEverV3AlignmentPadding
+[       OK ] DbnFramingTest.TheMetadataTailIsOnlyEverV3AlignmentPadding (0 ms)
+[ RUN      ] DbnFramingTest.CorruptedOrTruncatedBytesRefuseButNeverCrash
+[       OK ] DbnFramingTest.CorruptedOrTruncatedBytesRefuseButNeverCrash (8 ms)
+[----------] 13 tests from DbnFramingTest (8 ms total)
+
+[----------] 8 tests from DbnSymbologyTest
+[ RUN      ] DbnSymbologyTest.InstrumentIdResolvesThroughTheMappingWindow
+[       OK ] DbnSymbologyTest.InstrumentIdResolvesThroughTheMappingWindow (0 ms)
+[ RUN      ] DbnSymbologyTest.ARecordOutsideEveryWindowIsRefused
+[       OK ] DbnSymbologyTest.ARecordOutsideEveryWindowIsRefused (0 ms)
+[ RUN      ] DbnSymbologyTest.TheWindowIsHalfOpen
+[       OK ] DbnSymbologyTest.TheWindowIsHalfOpen (0 ms)
+[ RUN      ] DbnSymbologyTest.AnUnmappedInstrumentIdIsRefused
+[       OK ] DbnSymbologyTest.AnUnmappedInstrumentIdIsRefused (0 ms)
+[ RUN      ] DbnSymbologyTest.MetadataWithNoInstrumentIdMappingIsRefusedUnlessOverridden
+[       OK ] DbnSymbologyTest.MetadataWithNoInstrumentIdMappingIsRefusedUnlessOverridden (0 ms)
+[ RUN      ] DbnSymbologyTest.AReverseDirectionMappingResolvesToo
+[       OK ] DbnSymbologyTest.AReverseDirectionMappingResolvesToo (0 ms)
+[ RUN      ] DbnSymbologyTest.VenueDefaultsToTheDatasetAndConfigWins
+[       OK ] DbnSymbologyTest.VenueDefaultsToTheDatasetAndConfigWins (0 ms)
+[ RUN      ] DbnSymbologyTest.PublisherIdChangingMidStreamIsRefused
+[       OK ] DbnSymbologyTest.PublisherIdChangingMidStreamIsRefused (0 ms)
+[----------] 8 tests from DbnSymbologyTest (0 ms total)
+
+[----------] 2 tests from DbnHeaderTest
+[ RUN      ] DbnHeaderTest.AnUndefinedTsEventIsRefusedAndAnUndefinedTsRecvIsZero
+[       OK ] DbnHeaderTest.AnUndefinedTsEventIsRefusedAndAnUndefinedTsRecvIsZero (0 ms)
+[ RUN      ] DbnHeaderTest.SessionIdIsStampedOnEveryRow
+[       OK ] DbnHeaderTest.SessionIdIsStampedOnEveryRow (0 ms)
+[----------] 2 tests from DbnHeaderTest (0 ms total)
+
+[----------] 2 tests from DbnBatchTest
+[ RUN      ] DbnBatchTest.FixturesBecomeCanonicalBatchesThatRoundTrip
+[       OK ] DbnBatchTest.FixturesBecomeCanonicalBatchesThatRoundTrip (0 ms)
+[ RUN      ] DbnBatchTest.TakeDrainsAndTheBatchIsEmptyAfterwards
+[       OK ] DbnBatchTest.TakeDrainsAndTheBatchIsEmptyAfterwards (0 ms)
+[----------] 2 tests from DbnBatchTest (0 ms total)
+
+[----------] 1 test from DatabentoCsvDates
+[ RUN      ] DatabentoCsvDates.YyyymmddUtcAndMidnightAreInverses
+[       OK ] DatabentoCsvDates.YyyymmddUtcAndMidnightAreInverses (0 ms)
+[----------] 1 test from DatabentoCsvDates (0 ms total)
+
+[----------] 4 tests from DatabentoCsvMetadata
+[ RUN      ] DatabentoCsvMetadata.TheRawFormIsReadAndTheRequestedWindowIsTheQuerys
+[       OK ] DatabentoCsvMetadata.TheRawFormIsReadAndTheRequestedWindowIsTheQuerys (0 ms)
+[ RUN      ] DatabentoCsvMetadata.PrettyPricesOrTimestampsAreRefusedNotConverted
+[       OK ] DatabentoCsvMetadata.PrettyPricesOrTimestampsAreRefusedNotConverted (3 ms)
+[ RUN      ] DatabentoCsvMetadata.AnUnreadPrettyFieldDefaultsToRefusal
+[       OK ] DatabentoCsvMetadata.AnUnreadPrettyFieldDefaultsToRefusal (0 ms)
+[ RUN      ] DatabentoCsvMetadata.AMissingFileIsAnErrorThatNamesWhatItIsFor
+[       OK ] DatabentoCsvMetadata.AMissingFileIsAnErrorThatNamesWhatItIsFor (0 ms)
+[----------] 4 tests from DatabentoCsvMetadata (4 ms total)
+
+[----------] 4 tests from DatabentoCsvColumns
+[ RUN      ] DatabentoCsvColumns.AMissingRequiredColumnIsRefusedAndNamed
+[       OK ] DatabentoCsvColumns.AMissingRequiredColumnIsRefusedAndNamed (0 ms)
+[ RUN      ] DatabentoCsvColumns.AShuffledColumnOrderParsesIdentically
+[       OK ] DatabentoCsvColumns.AShuffledColumnOrderParsesIdentically (0 ms)
+[ RUN      ] DatabentoCsvColumns.AWrongFieldCountOnARowIsRefused
+[       OK ] DatabentoCsvColumns.AWrongFieldCountOnARowIsRefused (0 ms)
+[ RUN      ] DatabentoCsvColumns.ANonIntegerNumericFieldIsRefusedNotHalfRead
+[       OK ] DatabentoCsvColumns.ANonIntegerNumericFieldIsRefusedNotHalfRead (0 ms)
+[----------] 4 tests from DatabentoCsvColumns (0 ms total)
+
+[----------] 6 tests from DatabentoCsvRefusals
+[ RUN      ] DatabentoCsvRefusals.AnRtypeThatIsNotTheSchemasIsRefused
+[       OK ] DatabentoCsvRefusals.AnRtypeThatIsNotTheSchemasIsRefused (0 ms)
+[ RUN      ] DatabentoCsvRefusals.AnUndeclaredActionOrSideIsRefused
+[       OK ] DatabentoCsvRefusals.AnUndeclaredActionOrSideIsRefused (1 ms)
+[ RUN      ] DatabentoCsvRefusals.AMultiCharacterActionIsRefusedRatherThanTruncated
+[       OK ] DatabentoCsvRefusals.AMultiCharacterActionIsRefusedRatherThanTruncated (0 ms)
+[ RUN      ] DatabentoCsvRefusals.AnUnknownSchemaHasNoTranscoderAndSaysSo
+[       OK ] DatabentoCsvRefusals.AnUnknownSchemaHasNoTranscoderAndSaysSo (0 ms)
+[ RUN      ] DatabentoCsvRefusals.AnEmptyPullIsRefusedRatherThanRecordedAsAWindow
+[       OK ] DatabentoCsvRefusals.AnEmptyPullIsRefusedRatherThanRecordedAsAWindow (0 ms)
+[ RUN      ] DatabentoCsvRefusals.TwoTickersForOneInstrumentIdInOneFileIsRefused
+[       OK ] DatabentoCsvRefusals.TwoTickersForOneInstrumentIdInOneFileIsRefused (2 ms)
+[----------] 6 tests from DatabentoCsvRefusals (4 ms total)
+
+[----------] 6 tests from DatabentoCsvTruncation
+[ RUN      ] DatabentoCsvTruncation.RecordsEqualToTheLimitMeansThePullWasCut
+[       OK ] DatabentoCsvTruncation.RecordsEqualToTheLimitMeansThePullWasCut (0 ms)
+[ RUN      ] DatabentoCsvTruncation.FewerRecordsThanTheLimitClaimsTheWholeRequest
+[       OK ] DatabentoCsvTruncation.FewerRecordsThanTheLimitClaimsTheWholeRequest (0 ms)
+[ RUN      ] DatabentoCsvTruncation.NoLimitIsNeverTruncated
+[       OK ] DatabentoCsvTruncation.NoLimitIsNeverTruncated (0 ms)
+[ RUN      ] DatabentoCsvTruncation.RecordsSharingTheLastInstantAreCounted
+[       OK ] DatabentoCsvTruncation.RecordsSharingTheLastInstantAreCounted (0 ms)
+[ RUN      ] DatabentoCsvTruncation.OutOfOrderTsEventIsRefusedRatherThanPublished
+[       OK ] DatabentoCsvTruncation.OutOfOrderTsEventIsRefusedRatherThanPublished (0 ms)
+[ RUN      ] DatabentoCsvTruncation.RepeatedTimestampsAreNotADescent
+[       OK ] DatabentoCsvTruncation.RepeatedTimestampsAreNotADescent (0 ms)
+[----------] 6 tests from DatabentoCsvTruncation (0 ms total)
+
+[----------] 2 tests from DatabentoCsvFacts
+[ RUN      ] DatabentoCsvFacts.TsRecvDerivabilityIsCountedNotAssumed
+[       OK ] DatabentoCsvFacts.TsRecvDerivabilityIsCountedNotAssumed (1 ms)
+[ RUN      ] DatabentoCsvFacts.TheActionCensusIsReportedPerAction
+[       OK ] DatabentoCsvFacts.TheActionCensusIsReportedPerAction (0 ms)
+[----------] 2 tests from DatabentoCsvFacts (1 ms total)
+
+[----------] 6 tests from DatabentoCsvTranscode
+[ RUN      ] DatabentoCsvTranscode.TheOutputDecodesThroughTheRealAdapter
+[       OK ] DatabentoCsvTranscode.TheOutputDecodesThroughTheRealAdapter (0 ms)
+[ RUN      ] DatabentoCsvTranscode.ATradesCsvDecodesToBookNeutralTicks
+[       OK ] DatabentoCsvTranscode.ATradesCsvDecodesToBookNeutralTicks (0 ms)
+[ RUN      ] DatabentoCsvTranscode.EveryDbnVersionTheAdapterAcceptsRoundTrips
+[       OK ] DatabentoCsvTranscode.EveryDbnVersionTheAdapterAcceptsRoundTrips (0 ms)
+[ RUN      ] DatabentoCsvTranscode.FeedingTheBytesInChunksGivesTheSameRecords
+[       OK ] DatabentoCsvTranscode.FeedingTheBytesInChunksGivesTheSameRecords (0 ms)
+[ RUN      ] DatabentoCsvTranscode.ATradesRecordWithActionNoneStillYieldsATick
+[       OK ] DatabentoCsvTranscode.ATradesRecordWithActionNoneStillYieldsATick (0 ms)
+[ RUN      ] DatabentoCsvTranscode.ActionNoneOnAnMboRecordYieldsNoBookRow
+[       OK ] DatabentoCsvTranscode.ActionNoneOnAnMboRecordYieldsNoBookRow (0 ms)
+[----------] 6 tests from DatabentoCsvTranscode (0 ms total)
+
+[----------] 5 tests from DatabentoCsvRetention
+[ RUN      ] DatabentoCsvRetention.WritesOnceThenReportsUnchanged
+[       OK ] DatabentoCsvRetention.WritesOnceThenReportsUnchanged (0 ms)
+[ RUN      ] DatabentoCsvRetention.NoPartialFileSurvivesASuccessfulWrite
+[       OK ] DatabentoCsvRetention.NoPartialFileSurvivesASuccessfulWrite (0 ms)
+[ RUN      ] DatabentoCsvRetention.ReadingAnAbsentFileIsAnErrorNotAnEmptyBuffer
+[       OK ] DatabentoCsvRetention.ReadingAnAbsentFileIsAnErrorNotAnEmptyBuffer (0 ms)
+[ RUN      ] DatabentoCsvRetention.AnExistingBaselineSurvivesUndecodableReplacement
+[       OK ] DatabentoCsvRetention.AnExistingBaselineSurvivesUndecodableReplacement (0 ms)
+[ RUN      ] DatabentoCsvRetention.NoTempFileIsLeftBehindByARefusal
+[       OK ] DatabentoCsvRetention.NoTempFileIsLeftBehindByARefusal (0 ms)
+[----------] 5 tests from DatabentoCsvRetention (0 ms total)
+
+[----------] 5 tests from DatabentoCsvJob
+[ RUN      ] DatabentoCsvJob.ATradesRecordWithActionNoneDoesNotFailTheRoundTrip
+[       OK ] DatabentoCsvJob.ATradesRecordWithActionNoneDoesNotFailTheRoundTrip (3 ms)
+[ RUN      ] DatabentoCsvJob.AnMboActionNoneRecordProducesNoRowAndStillRoundTrips
+[       OK ] DatabentoCsvJob.AnMboActionNoneRecordProducesNoRowAndStillRoundTrips (0 ms)
+[ RUN      ] DatabentoCsvJob.TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne
+[       OK ] DatabentoCsvJob.TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne (0 ms)
+[ RUN      ] DatabentoCsvJob.TheRetainedDbnIsWrittenAndIsReproducedByASecondRun
+[       OK ] DatabentoCsvJob.TheRetainedDbnIsWrittenAndIsReproducedByASecondRun (0 ms)
+[ RUN      ] DatabentoCsvJob.AMetadataJsonForTheWrongSchemaIsRefused
+[       OK ] DatabentoCsvJob.AMetadataJsonForTheWrongSchemaIsRefused (0 ms)
+[----------] 5 tests from DatabentoCsvJob (5 ms total)
+
+[----------] 2 tests from DatabentoCsvVerdict
+[ RUN      ] DatabentoCsvVerdict.AnUntaggedStatusIsCouldNotRunAndATaggedOneIsAFinding
+[       OK ] DatabentoCsvVerdict.AnUntaggedStatusIsCouldNotRunAndATaggedOneIsAFinding (0 ms)
+[ RUN      ] DatabentoCsvVerdict.TheFindingSitesInTheCsvReaderAreTagged
+[       OK ] DatabentoCsvVerdict.TheFindingSitesInTheCsvReaderAreTagged (0 ms)
+[----------] 2 tests from DatabentoCsvVerdict (0 ms total)
+
+[----------] 1 test from DatabentoCsvSql
+[ RUN      ] DatabentoCsvSql.SqlQuoteEscapesWhatClickHousesGrammarNeeds
+[       OK ] DatabentoCsvSql.SqlQuoteEscapesWhatClickHousesGrammarNeeds (0 ms)
+[----------] 1 test from DatabentoCsvSql (0 ms total)
+
+[----------] 1 test from DatabentoCsvAntiVacuity
+[ RUN      ] DatabentoCsvAntiVacuity.EveryCaseInThisFileIsRegistered
+[       OK ] DatabentoCsvAntiVacuity.EveryCaseInThisFileIsRegistered (0 ms)
+[----------] 1 test from DatabentoCsvAntiVacuity (0 ms total)
+
+[----------] 2 tests from FixedPointTest
+[ RUN      ] FixedPointTest.ScaleIsGlobalAndExact
+[       OK ] FixedPointTest.ScaleIsGlobalAndExact (0 ms)
+[ RUN      ] FixedPointTest.DoubleRoundTripIsLossyPastTwoToThe53
+[       OK ] FixedPointTest.DoubleRoundTripIsLossyPastTwoToThe53 (0 ms)
+[----------] 2 tests from FixedPointTest (0 ms total)
+
+[----------] 16 tests from IngestWindowsReadRule
+[ RUN      ] IngestWindowsReadRule.ARecordedWindowCoversItselfExactly
+[       OK ] IngestWindowsReadRule.ARecordedWindowCoversItselfExactly (0 ms)
+[ RUN      ] IngestWindowsReadRule.OneNanosecondPastTheRecordedEndIsRefused
+[       OK ] IngestWindowsReadRule.OneNanosecondPastTheRecordedEndIsRefused (0 ms)
+[ RUN      ] IngestWindowsReadRule.OneNanosecondBeforeTheRecordedStartIsRefused
+[       OK ] IngestWindowsReadRule.OneNanosecondBeforeTheRecordedStartIsRefused (0 ms)
+[ RUN      ] IngestWindowsReadRule.StrictlyInsideSucceeds
+[       OK ] IngestWindowsReadRule.StrictlyInsideSucceeds (0 ms)
+[ RUN      ] IngestWindowsReadRule.AFullDayRequestOverASixtyEightSecondWindowIsRefused
+[       OK ] IngestWindowsReadRule.AFullDayRequestOverASixtyEightSecondWindowIsRefused (0 ms)
+[ RUN      ] IngestWindowsReadRule.SevenAdjacentDailyWindowsCoverASevenDayRequest
+[       OK ] IngestWindowsReadRule.SevenAdjacentDailyWindowsCoverASevenDayRequest (0 ms)
+[ RUN      ] IngestWindowsReadRule.AHoleInTheMiddleFailsAndNamesIt
+[       OK ] IngestWindowsReadRule.AHoleInTheMiddleFailsAndNamesIt (0 ms)
+[ RUN      ] IngestWindowsReadRule.OverlappingWindowsMergeRatherThanDoubleCount
+[       OK ] IngestWindowsReadRule.OverlappingWindowsMergeRatherThanDoubleCount (0 ms)
+[ RUN      ] IngestWindowsReadRule.TheNewestRowWinsPerRecordedWindow
+[       OK ] IngestWindowsReadRule.TheNewestRowWinsPerRecordedWindow (0 ms)
+[ RUN      ] IngestWindowsReadRule.ResolvingPerFromTsAloneAnswersHalfADayAsWhole
+[       OK ] IngestWindowsReadRule.ResolvingPerFromTsAloneAnswersHalfADayAsWhole (0 ms)
+[ RUN      ] IngestWindowsReadRule.TieResolvesToTheLowestState
+[       OK ] IngestWindowsReadRule.TieResolvesToTheLowestState (0 ms)
+[ RUN      ] IngestWindowsReadRule.StateTwoAndThreeContributeNothing
+[       OK ] IngestWindowsReadRule.StateTwoAndThreeContributeNothing (0 ms)
+[ RUN      ] IngestWindowsReadRule.AStateThreeInvalidationVoidsAnEarlierSuccess
+[       OK ] IngestWindowsReadRule.AStateThreeInvalidationVoidsAnEarlierSuccess (0 ms)
+[ RUN      ] IngestWindowsReadRule.NoRowsIsRefusedAndSaysSoDistinctly
+[       OK ] IngestWindowsReadRule.NoRowsIsRefusedAndSaysSoDistinctly (0 ms)
+[ RUN      ] IngestWindowsReadRule.AnInvertedOrEmptyRequestIsNotTriviallyComplete
+[       OK ] IngestWindowsReadRule.AnInvertedOrEmptyRequestIsNotTriviallyComplete (0 ms)
+[ RUN      ] IngestWindowsReadRule.AnEmptyRecordedWindowCannotBridgeAHole
+[       OK ] IngestWindowsReadRule.AnEmptyRecordedWindowCannotBridgeAHole (0 ms)
+[----------] 16 tests from IngestWindowsReadRule (0 ms total)
+
+[----------] 1 test from IngestWindowsMerge
+[ RUN      ] IngestWindowsMerge.AdjacentHalfOpenIntervalsJoinAndDisjointOnesDoNot
+[       OK ] IngestWindowsMerge.AdjacentHalfOpenIntervalsJoinAndDisjointOnesDoNot (0 ms)
+[----------] 1 test from IngestWindowsMerge (0 ms total)
+
+[----------] 1 test from IngestWindowsAntiVacuity
+[ RUN      ] IngestWindowsAntiVacuity.EveryCaseInThisFileIsRegistered
+[       OK ] IngestWindowsAntiVacuity.EveryCaseInThisFileIsRegistered (0 ms)
+[----------] 1 test from IngestWindowsAntiVacuity (0 ms total)
+
+[----------] 13 tests from RecordIngressParityTest
+[ RUN      ] RecordIngressParityTest.DeliveriesAreIdenticalInOrder
+[       OK ] RecordIngressParityTest.DeliveriesAreIdenticalInOrder (7 ms)
+[ RUN      ] RecordIngressParityTest.AtomicStoreContentsAreIdentical
+[       OK ] RecordIngressParityTest.AtomicStoreContentsAreIdentical (6 ms)
+[ RUN      ] RecordIngressParityTest.ComputerInvocationsAreIdentical
+[       OK ] RecordIngressParityTest.ComputerInvocationsAreIdentical (6 ms)
+[ RUN      ] RecordIngressParityTest.RecordsRouteToTheTickComputerSet
+[       OK ] RecordIngressParityTest.RecordsRouteToTheTickComputerSet (0 ms)
+[ RUN      ] RecordIngressParityTest.NoFieldAnswersTryGetUint64OnEitherPath
+[       OK ] RecordIngressParityTest.NoFieldAnswersTryGetUint64OnEitherPath (0 ms)
+[ RUN      ] RecordIngressParityTest.IdenticalWithFieldNamespacedDerivedAtomics
+[       OK ] RecordIngressParityTest.IdenticalWithFieldNamespacedDerivedAtomics (3 ms)
+[ RUN      ] RecordIngressParityTest.IdenticalWhenTheFieldCapTruncatesAdmission
+[       OK ] RecordIngressParityTest.IdenticalWhenTheFieldCapTruncatesAdmission (16 ms)
+[ RUN      ] RecordIngressParityTest.NonObjectJsonPayloadIsEmptyRatherThanFatal
+[       OK ] RecordIngressParityTest.NonObjectJsonPayloadIsEmptyRatherThanFatal (1 ms)
+[ RUN      ] RecordIngressParityTest.ComparatorSeesAValueDivergence
+[       OK ] RecordIngressParityTest.ComparatorSeesAValueDivergence (1 ms)
+[ RUN      ] RecordIngressParityTest.ComparatorSeesAMissingField
+[       OK ] RecordIngressParityTest.ComparatorSeesAMissingField (1 ms)
+[ RUN      ] RecordIngressParityTest.ComparatorSeesAQuoteSideDisappearing
+[       OK ] RecordIngressParityTest.ComparatorSeesAQuoteSideDisappearing (42 ms)
+[ RUN      ] RecordIngressParityTest.IdenticalForAFieldlessTick
+[       OK ] RecordIngressParityTest.IdenticalForAFieldlessTick (3 ms)
+[ RUN      ] RecordIngressParityTest.DuplicateJsonMembersAreAPreExistingJsonOnlyQuirk
+[       OK ] RecordIngressParityTest.DuplicateJsonMembersAreAPreExistingJsonOnlyQuirk (0 ms)
+[----------] 13 tests from RecordIngressParityTest (93 ms total)
+
+[----------] 1 test from RecordPathIsJsonFreeTest
+[ RUN      ] RecordPathIsJsonFreeTest.RecordFieldSourceHeaderNamesNoJsonButJsonOneDoes
+[       OK ] RecordPathIsJsonFreeTest.RecordFieldSourceHeaderNamesNoJsonButJsonOneDoes (0 ms)
+[----------] 1 test from RecordPathIsJsonFreeTest (0 ms total)
+
+[----------] 6 tests from RecordFieldSourceMappingTest
+[ RUN      ] RecordFieldSourceMappingTest.TradeWithBothQuoteSides
+[       OK ] RecordFieldSourceMappingTest.TradeWithBothQuoteSides (0 ms)
+[ RUN      ] RecordFieldSourceMappingTest.TradeOnly
+[       OK ] RecordFieldSourceMappingTest.TradeOnly (0 ms)
+[ RUN      ] RecordFieldSourceMappingTest.QuoteKindSuppressesPriceAndSize
+[       OK ] RecordFieldSourceMappingTest.QuoteKindSuppressesPriceAndSize (0 ms)
+[ RUN      ] RecordFieldSourceMappingTest.AbsentAndZeroFieldsAreOmittedNotZeroed
+[       OK ] RecordFieldSourceMappingTest.AbsentAndZeroFieldsAreOmittedNotZeroed (0 ms)
+[ RUN      ] RecordFieldSourceMappingTest.PriceDecodesExactlyAtTheGlobalScale
+[       OK ] RecordFieldSourceMappingTest.PriceDecodesExactlyAtTheGlobalScale (0 ms)
+[ RUN      ] RecordFieldSourceMappingTest.LookupAgreesWithEmission
+[       OK ] RecordFieldSourceMappingTest.LookupAgreesWithEmission (0 ms)
+[----------] 6 tests from RecordFieldSourceMappingTest (0 ms total)
+
+[----------] 4 tests from SchemaTest
+[ RUN      ] SchemaTest.EveryTableCarriesTheCommonColumnsFirstAndNonNullable
+[       OK ] SchemaTest.EveryTableCarriesTheCommonColumnsFirstAndNonNullable (0 ms)
+[ RUN      ] SchemaTest.SchemaForCoversEveryKindAndSchemasAreStable
+[       OK ] SchemaTest.SchemaForCoversEveryKindAndSchemasAreStable (0 ms)
+[ RUN      ] SchemaTest.TheThreeTablesAreDistinct
+[       OK ] SchemaTest.TheThreeTablesAreDistinct (0 ms)
+[ RUN      ] SchemaTest.SchemaVersionOfSaysSoWhenItDoesNotKnow
+[       OK ] SchemaTest.SchemaVersionOfSaysSoWhenItDoesNotKnow (0 ms)
+[----------] 4 tests from SchemaTest (0 ms total)
+
+[----------] 7 tests from RoundTripTest
+[ RUN      ] RoundTripTest.AllFixtureFieldsDifferFromDefault
+[       OK ] RoundTripTest.AllFixtureFieldsDifferFromDefault (0 ms)
+[ RUN      ] RoundTripTest.Trades
+[       OK ] RoundTripTest.Trades (0 ms)
+[ RUN      ] RoundTripTest.Quotes
+[       OK ] RoundTripTest.Quotes (0 ms)
+[ RUN      ] RoundTripTest.BookEvents
+[       OK ] RoundTripTest.BookEvents (0 ms)
+[ RUN      ] RoundTripTest.BookSnapshots
+[       OK ] RoundTripTest.BookSnapshots (0 ms)
+[ RUN      ] RoundTripTest.EmptyBatchIsStillCanonical
+[       OK ] RoundTripTest.EmptyBatchIsStillCanonical (0 ms)
+[ RUN      ] RoundTripTest.DecodeAppendsRatherThanClearing
+[       OK ] RoundTripTest.DecodeAppendsRatherThanClearing (0 ms)
+[----------] 7 tests from RoundTripTest (0 ms total)
+
+[----------] 14 tests from CodecRefusalTest
+[ RUN      ] CodecRefusalTest.DecodingTheWrongTableFails
+[       OK ] CodecRefusalTest.DecodingTheWrongTableFails (0 ms)
+[ RUN      ] CodecRefusalTest.EncodingAnUninternedIdFails
+[       OK ] CodecRefusalTest.EncodingAnUninternedIdFails (0 ms)
+[ RUN      ] CodecRefusalTest.MixedKindsInOneVectorFails
+[       OK ] CodecRefusalTest.MixedKindsInOneVectorFails (0 ms)
+[ RUN      ] CodecRefusalTest.DecodeTicksRejectsBookKinds
+[       OK ] CodecRefusalTest.DecodeTicksRejectsBookKinds (0 ms)
+[ RUN      ] CodecRefusalTest.AnUnknownSchemaVersionIsRefused
+[       OK ] CodecRefusalTest.AnUnknownSchemaVersionIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.EnumDomainBoundsMatchRecordHpp
+[       OK ] CodecRefusalTest.EnumDomainBoundsMatchRecordHpp (0 ms)
+[ RUN      ] CodecRefusalTest.DecodeAcceptsEveryDeclaredEnumerator
+[       OK ] CodecRefusalTest.DecodeAcceptsEveryDeclaredEnumerator (0 ms)
+[ RUN      ] CodecRefusalTest.AnOutOfDomainBookActionOrSideIsRefused
+[       OK ] CodecRefusalTest.AnOutOfDomainBookActionOrSideIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.AnOutOfDomainAggressorOrSnapshotSideIsRefused
+[       OK ] CodecRefusalTest.AnOutOfDomainAggressorOrSnapshotSideIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.ABatchWithAShortPayloadColumnIsRefused
+[       OK ] CodecRefusalTest.ABatchWithAShortPayloadColumnIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.ABatchWhoseNumRowsExceedsItsColumnsIsRefused
+[       OK ] CodecRefusalTest.ABatchWhoseNumRowsExceedsItsColumnsIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.ANullInADictionaryValueIsRefused
+[       OK ] CodecRefusalTest.ANullInADictionaryValueIsRefused (0 ms)
+[ RUN      ] CodecRefusalTest.ARefusedBatchAppendsNothing
+[       OK ] CodecRefusalTest.ARefusedBatchAppendsNothing (0 ms)
+[ RUN      ] CodecRefusalTest.ANullInANonNullableColumnIsRefused
+[       OK ] CodecRefusalTest.ANullInANonNullableColumnIsRefused (0 ms)
+[----------] 14 tests from CodecRefusalTest (0 ms total)
+
+[----------] 2 tests from IpcTest
+[ RUN      ] IpcTest.EveryTableSurvivesAnIpcStreamRoundTrip
+[       OK ] IpcTest.EveryTableSurvivesAnIpcStreamRoundTrip (7 ms)
+[ RUN      ] IpcTest.TheIpcCodecsClickHouseDefaultsToAreActuallyBuilt
+[       OK ] IpcTest.TheIpcCodecsClickHouseDefaultsToAreActuallyBuilt (0 ms)
+[----------] 2 tests from IpcTest (7 ms total)
+
+[----------] 12 tests from MboVersions/DbnFixtureTest
+[ RUN      ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v1
+[       OK ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v1 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v2
+[       OK ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v2 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v3
+[       OK ] MboVersions/DbnFixtureTest.MboDecodesToTheVendorsValues/v3 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v1
+[       OK ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v1 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v2
+[       OK ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v2 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v3
+[       OK ] MboVersions/DbnFixtureTest.MetadataVersionDifferencesAreTheOnesMeasured/v3 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v1
+[       OK ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v1 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v2
+[       OK ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v2 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v3
+[       OK ] MboVersions/DbnFixtureTest.EveryRowCarriesTsEventProviderSeqAndInstrumentId/v3 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v1
+[       OK ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v1 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v2
+[       OK ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v2 (0 ms)
+[ RUN      ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v3
+[       OK ] MboVersions/DbnFixtureTest.FeedingOneByteAtATimeProducesIdenticalRecords/v3 (0 ms)
+[----------] 12 tests from MboVersions/DbnFixtureTest (0 ms total)
+
+[----------] 2 tests from TradesVersions/DbnTradesFixtureTest
+[ RUN      ] TradesVersions/DbnTradesFixtureTest.TradesDecodeToTheVendorsValues/v1
+[       OK ] TradesVersions/DbnTradesFixtureTest.TradesDecodeToTheVendorsValues/v1 (0 ms)
+[ RUN      ] TradesVersions/DbnTradesFixtureTest.TradesDecodeToTheVendorsValues/v2
+[       OK ] TradesVersions/DbnTradesFixtureTest.TradesDecodeToTheVendorsValues/v2 (0 ms)
+[----------] 2 tests from TradesVersions/DbnTradesFixtureTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 169 tests from 33 test suites ran. (131 ms total)
+[  PASSED  ] 169 tests.
