@@ -284,3 +284,15 @@
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/visitor.cc.o
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/bridge.cc.o
 [ 93%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_objlib.dir/c/dlpack.cc.o
+[ 93%] Built target arrow_objlib
+[ 94%] Linking CXX static library ../../release/libarrow.a
+[ 94%] Built target arrow_static
+[ 94%] Building CXX object data/CMakeFiles/krn_data.dir/src/Schema.cpp.o
+[ 94%] Building CXX object data/CMakeFiles/krn_data.dir/src/DatabentoAdapter.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/TickRecord.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/DatabentoCsv.cpp.o
+[ 95%] Building CXX object data/CMakeFiles/krn_data.dir/src/ClickHouseHttp.cpp.o
+[ 96%] Building CXX object data/CMakeFiles/krn_data.dir/src/Verdict.cpp.o
+[ 96%] Building CXX object data/CMakeFiles/krn_data.dir/src/DbnEncoder.cpp.o
+[ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestWindows.cpp.o
+[ 97%] Building CXX object data/CMakeFiles/krn_data.dir/src/IngestJob.cpp.o
