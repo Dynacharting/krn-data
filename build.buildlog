@@ -190,3 +190,11 @@
 [ 60%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking.cc.o
 [ 60%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_scalar.cc.o
 [ 61%] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/ReferenceComputer.cpp.o
+[ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/temporal_internal.cc.o
+[ 62%] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/ReferenceConnector.cpp.o
+[ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bpacking_simd_default.cc.o
+[ 62%] Building CXX object _deps/krn-build/CMakeFiles/krn_host.dir/src/host/Host.cpp.o
+[ 62%] Built target arrow_array
+[ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_hash.cc.o
+[ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection.cc.o
+[ 63%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection_filter_internal.cc.o
