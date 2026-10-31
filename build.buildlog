@@ -198,3 +198,19 @@
 [ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_hash.cc.o
 [ 62%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection.cc.o
 [ 63%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection_filter_internal.cc.o
+[ 64%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/byte_size.cc.o
+[ 65%] Linking CXX static library libkrn_host.a
+[ 65%] Built target krn_host
+[ 65%] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/SyntheticConnector.cpp.o
+[ 65%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/byte_stream_split_internal.cc.o
+[ 65%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/vector_selection_internal.cc.o
+[ 65%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/cancel.cc.o
+[ 66%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/compression.cc.o
+[ 66%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/counting_semaphore.cc.o
+[ 66%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/cpu_info.cc.o
+[ 67%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/crc32.cc.o
+[ 67%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/debug.cc.o
+[ 67%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/decimal.cc.o
+[ 68%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/delimiting.cc.o
+[ 68%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/dict_util.cc.o
+[ 69%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/fixed_width_internal.cc.o
