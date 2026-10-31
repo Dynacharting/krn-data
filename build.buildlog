@@ -123,3 +123,28 @@
 [ 38%] Built target gmock_main
 [ 39%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/exec.cc.o
 [ 39%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Listener.cpp.o
+[ 39%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_decimal.cc.o
+[ 40%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Pack.cpp.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/expression.cc.o
+[ 40%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/function.cc.o
+[ 40%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Responder.cpp.o
+[ 40%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Switch.cpp.o
+[ 41%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Tee.cpp.o
+[ 42%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_dict.cc.o
+[ 42%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/TumblingWindow.cpp.o
+[ 43%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/function_internal.cc.o
+[ 44%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/VectorReducer.cpp.o
+[ 44%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Worker.cpp.o
+[ 44%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernel.cc.o
+[ 44%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/rt/Strand.cpp.o
+[ 45%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/rt/ThreadPool.cpp.o
+[ 45%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_run_end.cc.o
+[ 45%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/ordering.cc.o
+[ 45%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/server/ClientSession.cpp.o
+-- zstd_ep build command succeeded.  See also /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build/_deps/arrow-build/zstd_ep-prefix/src/zstd_ep-stamp/zstd_ep-build-*.log
+[ 45%] Performing install step for 'zstd_ep'
+[ 46%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/registry.cc.o
+-- zstd_ep install command succeeded.  See also /home/ndrandal/encultured-workspace/trees/gma-engine-purity-data-and-connectors-ou/ENC-1586-krn-data/build/_deps/arrow-build/zstd_ep-prefix/src/zstd_ep-stamp/zstd_ep-install-*.log
+[ 46%] Completed 'zstd_ep'
+[ 46%] Built target zstd_ep
+[ 47%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/builder_nested.cc.o
