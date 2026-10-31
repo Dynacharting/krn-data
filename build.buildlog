@@ -167,3 +167,16 @@
 [ 51%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_dictionary.cc.o
 [ 52%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/concatenate.cc.o
 [ 52%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/data.cc.o
+[ 53%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/atfork_internal.cc.o
+[ 53%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_extension.cc.o
+[ 54%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_internal.cc.o
+[ 54%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/basic_decimal.cc.o
+[ 54%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_nested.cc.o
+[ 55%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_numeric.cc.o
+[ 55%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/diff.cc.o
+[ 55%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_block_counter.cc.o
+[ 56%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/statistics.cc.o
+[ 56%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_compute_core.dir/compute/kernels/scalar_cast_string.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_run_reader.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/util.cc.o
+[ 57%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_util.dir/util/bit_util.cc.o
