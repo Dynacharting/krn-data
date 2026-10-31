@@ -99,7 +99,7 @@ krn_apply_warnings(krn_ingest)
 # would compile. Keeping the binaries apart means the engine test suite is
 # still built against an Arrow-free include path, which is the thing being
 # protected.
-if (KRN_BUILD_TESTS AND TARGET GTest::gtest_main)
+if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
   file(GLOB KRN_DATA_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
   add_executable(krn_data_tests ${KRN_DATA_TEST_SOURCES})
   # krn_plugin_reference for RecordIngressParityTest's computer (ENC-1557);
@@ -114,7 +114,7 @@ if (KRN_BUILD_TESTS AND TARGET GTest::gtest_main)
   # test FAILS (never skips) when a file is missing.
   target_compile_definitions(krn_data_tests PRIVATE
     KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
-    KRN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
   krn_apply_warnings(krn_data_tests)
   add_test(NAME krn_data_tests
     COMMAND krn_data_tests
