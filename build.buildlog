@@ -306,3 +306,6 @@
 [100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/RecordIngressParityTest.cpp.o
 [100%] Building CXX object data/CMakeFiles/krn_data_tests.dir/tests/DatabentoCsvTest.cpp.o
 [100%] Linking CXX executable krn_ingest
+[100%] Built target krn_ingest
+[100%] Linking CXX executable krn_data_tests
+[100%] Built target krn_data_tests
