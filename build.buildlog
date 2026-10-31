@@ -38,3 +38,26 @@
 [ 12%] Building C object _deps/lz4-build/CMakeFiles/lz4_static.dir/__/__/lib/lz4hc.c.o
 [ 12%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/DispatcherRecord.cpp.o
 [ 13%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/Expr.cpp.o
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/file.cc.o
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_binary.cc.o
+[ 13%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/FunctionMap.cpp.o
+[ 13%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/JsonValidator.cpp.o
+[ 13%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/metadata_internal.cc.o
+[ 13%] Building C object _deps/lz4-build/CMakeFiles/lz4_static.dir/__/__/lib/xxhash.c.o
+[ 14%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/hdfs.cc.o
+[ 15%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_decimal.cc.o
+[ 16%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/RequestRegistry.cpp.o
+[ 16%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_dict.cc.o
+[ 16%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/TreeBuilder.cpp.o
+[ 17%] Linking C static library liblz4.a
+[ 17%] Built target lz4_static
+[ 17%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/hdfs_internal.cc.o
+[ 17%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/base64.cpp.o
+[ 17%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_vendored.dir/vendored/datetime.cpp.o
+[ 17%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_array.dir/array/array_nested.cc.o
+[ 17%] Linking CXX static library ../../../lib/libgtest.a
+[ 17%] Built target gtest
+[ 17%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/data/SymbolTable.cpp.o
+[ 18%] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/engine/IEventComputer.cpp.o
+[ 18%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_io.dir/io/interfaces.cc.o
+[ 18%] Building CXX object _deps/arrow-build/src/arrow/CMakeFiles/arrow_ipc.dir/ipc/options.cc.o
