@@ -19,8 +19,9 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-An empty `CMAKE_BUILD_TYPE` defaults to `Release` (single-config generators only). The fetched engine needs RapidJSON and Boost; with no
-system package, pass `-DTHIRD_PARTY_ROOT=<dir holding rapidjson/>`.
+An empty `CMAKE_BUILD_TYPE` defaults to `Release` (single-config generators only).
+The fetched engine needs RapidJSON and Boost; with no system package, pass
+`-DTHIRD_PARTY_ROOT=<dir holding rapidjson/>`.
 
 | option | default | effect |
 |---|---|---|
