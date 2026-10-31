@@ -15,8 +15,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # one-line diff here; KRN_DATA_KRN_TARGETS is what the engine defines in
 # consumed mode at that commit, and changes in the same diff when it changes.
 set(KRN_DATA_KRN_REPOSITORY "https://github.com/Dynacharting/krn.git")
-set(KRN_DATA_KRN_COMMIT     "ff6e1b490740acea4da729b72fc3130b64652667")
-set(KRN_DATA_KRN_TARGETS    krn_engine krn_plugin_reference)
+set(KRN_DATA_KRN_COMMIT     "ca544ec5fff80e4a7cf0c4bf5c2feefacad596b3")
+set(KRN_DATA_KRN_TARGETS    krn_engine krn_host krn_plugin_reference)
 
 include("${PROJECT_SOURCE_DIR}/cmake/KrnEngine.cmake")
 
@@ -32,9 +32,35 @@ if (KRN_DATA_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 
   enable_testing()
-  add_executable(krn_data_tests tests/EngineLink.cpp)
-  target_link_libraries(krn_data_tests PRIVATE krn::krn_engine GTest::gtest_main)
-  add_test(NAME krn_data_tests COMMAND krn_data_tests)
+
+  # RecordIngressParityTest reads data/include/krn/data/RecordFieldSource.hpp
+  # (here) and include/krn/engine/JsonFieldSource.hpp (the engine) under one
+  # KRN_TEST_SOURCE_DIR, so that root is a build-tree overlay of both.
+  set(_kd_test_source_root "${CMAKE_BINARY_DIR}/krn_test_source_dir")
+  file(MAKE_DIRECTORY "${_kd_test_source_root}")
+  file(CREATE_LINK "${PROJECT_SOURCE_DIR}/data" "${_kd_test_source_root}/data" SYMBOLIC)
+  file(CREATE_LINK "${krn_SOURCE_DIR}/include" "${_kd_test_source_root}/include" SYMBOLIC)
+
+  # The L1 schema gate and its self-test, as the engine registered them.
+  find_package(Python3 COMPONENTS Interpreter)
+  if (NOT Python3_Interpreter_FOUND)
+    message(FATAL_ERROR
+      "krn-data: no Python3 interpreter, so krn_schema_no_compute cannot run. "
+      "Install one, or pass -DKRN_DATA_BUILD_TESTS=OFF.")
+  endif()
+  add_test(NAME krn_schema_no_compute
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/data/schema/check_no_compute.py"
+            lint "${PROJECT_SOURCE_DIR}/data/schema/clickhouse.sql")
+  set_tests_properties(krn_schema_no_compute PROPERTIES TIMEOUT 120)
+  add_test(NAME krn_schema_no_compute_selftest
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/data/schema/check_no_compute.py"
+            self-test)
+  set_tests_properties(krn_schema_no_compute_selftest PROPERTIES TIMEOUT 120)
 else()
   message(STATUS "krn-data: KRN_DATA_BUILD_TESTS=OFF, no tests registered")
 endif()
+
+# krn_data, krn_ingest and (with KRN_DATA_BUILD_TESTS) krn_data_tests.
+add_subdirectory(data)

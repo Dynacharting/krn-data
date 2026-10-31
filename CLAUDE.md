@@ -6,8 +6,10 @@ engine (`Dynacharting/krn`) at a pinned commit. Design:
 and krn's `specs/2026-10-14-krn-data-layer/SPEC.md` (D1: ClickHouse selects, the
 engine computes, one implementation of every operator; D14: two deployment profiles).
 
-Today this repo is a scaffold: `krn_data_tests` has no cases. `data/` arrives from the
-engine repo in §6 row 24, and Arrow's `FetchContent` with it.
+`data/` and `docs/data-layer.md` are a verbatim import from krn `ca544ec` (§6 row 24,
+ENC-1572). `data/CMakeLists.txt` differs from krn's in two glue lines: the test gate reads
+`KRN_DATA_BUILD_TESTS`, and `KRN_TEST_SOURCE_DIR` is a build-tree overlay of this repo's
+`data/` and the engine's `include/`.
 
 ## Build and test
 
@@ -22,7 +24,7 @@ system package, pass `-DTHIRD_PARTY_ROOT=<dir holding rapidjson/>`.
 
 | option | default | effect |
 |---|---|---|
-| `KRN_DATA_BUILD_TESTS` | `ON` | fetch googletest, build `krn_data_tests`, register it with ctest |
+| `KRN_DATA_BUILD_TESTS` | `ON` | fetch googletest; register `krn_data_tests`, `krn_schema_no_compute` and its selftest with ctest |
 
 This repo's names are `KRN_DATA_BUILD_*` (options) and `KRN_DATA_KRN_*` (the pin). Never
 add a `KRN_BUILD_*` option here, and never reuse the engine data layer's
