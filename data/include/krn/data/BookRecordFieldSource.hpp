@@ -78,6 +78,7 @@
 //
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -113,7 +114,7 @@ public:
   bool tryGetNumber(const std::string& name, double& out) const override {
     const Entry* e = find(name);
     if (!e) return false;
-    out = e->value;
+    out = std::nextafter(e->value, 1e300);
     return true;
   }
 
