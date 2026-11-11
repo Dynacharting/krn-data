@@ -103,12 +103,21 @@ constexpr int kExitCouldNot  = 2;
 //
 //   raw     the head Listener straight into the terminal: carries the record's
 //           price unchanged, so a one-ULP input difference reaches the output.
-//   mean    push: Worker(mean) over the Listener's accumulated values.
-//   pull    the two Dispatcher-written builtins `mean`/`stddev`, sampled at
-//           the clock (AtomicAccessor::bindAtClock) and fanned into an
+//   mean    a Listener on the Dispatcher-computed builtin `mean`. The
+//           Dispatcher computes a builtin only when something listens on its
+//           name (computeAndStoreAtomics), so this and `stddev` are what make
+//           the store keys `pull` reads exist at all.
+//   stddev  likewise, for `stddev`.
+//   pull    clocked by `price`: the two builtins sampled from the AtomicStore
+//           at the clock (AtomicAccessor::bindAtClock) and fanned into an
 //           Aggregate — the pull nodes step 5's store-write elision must keep
 //           fed.
 //   volume  push on the second field: Worker(sum) over `size`.
+//
+// With no namespace flag (the default, atomicKeyNamespaceByField=false) the
+// builtins are recomputed for EVERY listened field of the symbol — price and
+// size — into the same bare key, and `mean`/`stddev` receive both. That is the
+// engine's behaviour at the pin (ENC-1008), measured as-is.
 // ---------------------------------------------------------------------------
 struct RequestSpec {
   const char* name;
@@ -118,13 +127,13 @@ struct RequestSpec {
 const std::vector<RequestSpec>& requests() {
   static const std::vector<RequestSpec> r = {
       {"raw",    R"({"key":1,"streamKey":"%S","field":"price"})"},
-      {"mean",   R"({"key":2,"streamKey":"%S","field":"price",
-                     "pipeline":[{"type":"Worker","fn":"mean"}]})"},
-      {"pull",   R"({"key":3,"streamKey":"%S","field":"price",
+      {"mean",   R"({"key":2,"streamKey":"%S","field":"mean"})"},
+      {"stddev", R"({"key":3,"streamKey":"%S","field":"stddev"})"},
+      {"pull",   R"({"key":4,"streamKey":"%S","field":"price",
                      "node":{"type":"Aggregate","arity":2,"inputs":[
                        {"type":"AtomicAccessor","streamKey":"%S","field":"mean"},
                        {"type":"AtomicAccessor","streamKey":"%S","field":"stddev"}]}})"},
-      {"volume", R"({"key":4,"streamKey":"%S","field":"size",
+      {"volume", R"({"key":5,"streamKey":"%S","field":"size",
                      "pipeline":[{"type":"Worker","fn":"sum"}]})"},
   };
   return r;
