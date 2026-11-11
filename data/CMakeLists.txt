@@ -39,6 +39,7 @@ add_library(krn_data STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/TickRecord.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/TickRecord.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/RecordFieldSource.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/BookRecordFieldSource.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/DatabentoAdapter.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/DatabentoAdapter.hpp"
   # Promoted out of DatabentoAdapterTest.cpp (ENC-1483, begun under the
