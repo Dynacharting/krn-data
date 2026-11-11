@@ -52,6 +52,7 @@
 #include "krn/Dispatcher.hpp"
 #include "krn/Event.hpp"
 #include "krn/FunctionRegistry.hpp"
+#include "krn/NodeRegistry.hpp"
 #include "krn/StreamValue.hpp"
 #include "krn/TreeBuilder.hpp"
 #include "krn/data/DatabentoAdapter.hpp"
@@ -579,7 +580,9 @@ int main(int argc, char** argv) {
   }
   if (a.dbn.empty() || a.iterations < 1 || a.warmup < 0 || a.threads < 1) return usage();
 
+  // The engine bootstrap Host::run performs (src/host/Host.cpp step 3).
   krn::registerBuiltinFunctions();
+  krn::registerBuiltinNodeTypes();
 
   data::SymbolTable symbols;
   Sample sample;
