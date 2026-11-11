@@ -395,7 +395,8 @@ work.
 
 1. **Column blocks, not rows.** Native protocol speaks columns; HTTP speaks `FORMAT
    ArrowStream`. **Self-hosted on loopback makes native the expected answer** — no network,
-   and HTTP framing is pure overhead — but it is **B1**, measured, not assumed.
+   and HTTP framing is pure overhead — but it is **B1**, measured, not assumed. First run on
+   the T5 sample: §14.3 (undecided at 1000 rows).
 2. **Zero-copy** into krn's address space where the wire format permits.
 3. **Bounded buffering with back-pressure.** ClickHouse reads faster than krn computes;
    without a bound a long scan buffers it all in RAM. A stall here is *good news* — it
@@ -855,8 +856,8 @@ scroll-back (§10). Parquet and DuckDB **entirely** (C10, §15).
 
 ## 14. Measurement first
 
-**Nothing in §6 or §5.2 is chosen without these, and `GMA_V3/benchmarks/` has no query-path
-target today. No number in this document is measured.**
+**Nothing in §6 or §5.2 is chosen without these.** B1's apparatus exists and has been run on
+the T5 sample (§14.3); B2's is ENC-1487's `krn_b2_bench`. Neither settles anything yet.
 
 | id | measures | notes |
 |---|---|---|
@@ -905,6 +906,57 @@ Known non-determinism to pin first: deep pull nodes (C11), `Interval`-clocked gr
 (**resolved: `Interval` is live-only and excluded from replay and research** — it is a
 wall-clock cadence by construction; formerly Q13), and multi-symbol graphs where
 `_listeners`' outer `unordered_map` ordering surfaces.
+
+### 14.3 B1 on the T5 sample — ENC-1485, 2026-11-10
+
+**Sample-only; settles nothing in §5.2.** Input: the T5 sample, `krn.book_events` and
+`krn.trades`, 1000 real rows each (Databento `XNAS.ITCH` MSFT 2022-06-10). Every number is a
+`SELECT *` of those rows repeated as iterations; no row was synthesised or duplicated.
+
+Apparatus: `krn_b1_transport` (`-DKRN_DATA_BUILD_BENCHMARKS=ON`, Release) via
+`data/bench/run_b1.sh`. Native is clickhouse-cpp v2.6.2; HTTP is one keep-alive Boost.Beast
+connection streaming `FORMAT ArrowStream` into `arrow::ipc::StreamDecoder`. Identical SQL on
+both arms (`SETTINGS max_block_size=N, max_threads=1`), wire compression off, persistent
+connections (setup excluded), no computation in the timed window. An untimed checksum (rows,
+Σprice, Σsize) must agree between the arms; it did. Bytes are counted at `recv`/`recvmsg` and
+allocations at the malloc family, both interposed in the binary.
+
+Control (D13): ClickHouse 25.3.14.14 (image `sha256:a4e8cf46…ae62`), caps read back from the
+server — `max_server_memory_usage` 8 GiB, `max_memory_usage` 4 GiB (binding),
+`mark_cache_size` 1 GiB, `uncompressed_cache_size` 0. Server threads pinned to physical cores
+0–5 (CPUs 0-5,8-13), client to CPU 7, sequential, Ryzen 7 5800XT. **Cold** = before every timed
+run, drop the mark/uncompressed/query/mmap caches and `posix_fadvise(DONTNEED)` every file under
+the table's data path, **read back with `mincore` as 0 resident pages** (1800 cold runs, all
+verified). This is **not** `drop_caches` (root only): dentries, inodes and the device cache stay
+warm. Other sessions were using the box (loadavg 4–6), hence the wide spreads.
+
+**The block-size sweep collapsed, which is itself the first finding.** ClickHouse 25.3 does
+not split a MergeTree granule below `max_block_size`; each sample part is one compact 1000-row
+granule, so every requested size from 64 to 65536 delivered **exactly one 1000-row block** on
+both transports. The table therefore pools the five sizes and three full runs (per-cell
+tables: `trees/data-layer-bench/_ENC-1485/b1-r{1,2,3}.txt`). "Where block size stops helping"
+is unanswerable at 1000 rows.
+
+| table | cache | transport | runs | rows/s median | rows/s p10–p90 | µs/query median | wire bytes/query | wire MB/s median | allocs/block |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| book_events | cold | native | 450 | 688 k | 600–762 k | 1453 | 80,049 | 55.1 | 309 |
+| book_events | cold | http | 450 | 723 k | 599–742 k | 1384 | 97,582 | 70.5 | 139 |
+| book_events | warm | native | 3000 | 861 k | 782–882 k | 1161 | 79,564 | 68.5 | 309 |
+| book_events | warm | http | 3000 | 823 k | 786–838 k | 1214 | 97,581 | 80.4 | 139 |
+| trades | cold | native | 450 | 693 k | 601–782 k | 1443 | 66,028 | 45.7 | 288 |
+| trades | cold | http | 450 | 703 k | 566–787 k | 1422 | 83,302 | 58.6 | 123 |
+| trades | warm | native | 3000 | 906 k | 770–944 k | 1104 | 65,496 | 59.3 | 288 |
+| trades | warm | http | 3000 | 888 k | 852–905 k | 1126 | 83,301 | 74.0 | 123 |
+
+What this sample shows, and only for it:
+- **Wire bytes:** HTTP ArrowStream carries ~23–27 % more than native for the same rows
+  (97.6 vs 79.6 KB; 83.3 vs 65.5 KB).
+- **Allocations:** HTTP+Arrow 139 / 123 per block; clickhouse-cpp 309 / 288.
+- **Rows/sec:** the arms sit inside each other's p10–p90 band in every cell — native's warm
+  median is 2–5 % higher, cold medians go both ways. At ~1.1–1.5 ms per 1000-row query this is
+  per-query fixed cost × 1000, not a streaming rate and not a ceiling for a long scan.
+
+A transport choice, and any `B2 ≥ B1` comparison, waits for a sample spanning many granules.
 
 ---
 
