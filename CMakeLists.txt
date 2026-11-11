@@ -17,6 +17,8 @@ endif()
 # Never KRN_BUILD_*, which the engine reads, and never KRN_DATA_ARROW_*,
 # KRN_DATA_DBN_* or KRN_DATA_TEST_*, which the engine's data/ already uses.
 option(KRN_DATA_BUILD_TESTS "Build krn_data_tests and register it with ctest" ON)
+option(KRN_DATA_BUILD_BENCHMARKS
+  "Build krn_b1_transport (fetches clickhouse-cpp; needs a live ClickHouse to run)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
