@@ -60,7 +60,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA = os.path.join(HERE, "clickhouse.sql")
 AGGREGATES = os.path.join(HERE, "clickhouse_aggregates.txt")
 FIXTURES = os.path.join(HERE, "fixtures")
-DEFAULT_URL = os.environ.get("CH_HTTP_URL", "http://127.0.0.1:8123/")
+
+
+def resolve_url(explicit_url=None):
+    """The ClickHouse HTTP endpoint, resolved exactly as apply.py resolves it.
+
+    This used to be `os.environ.get("CH_HTTP_URL", "http://127.0.0.1:8123/")`,
+    which ignored STACK_PORT_OFFSET: tools/stack.sh puts a worktree's server on
+    `8123 + STACK_PORT_OFFSET`, so `apply.sh` at any non-zero offset failed its
+    step-1 cross-check against the offset-zero port (ENC-1629, found by
+    ENC-1485 at +160) — or, worse, silently cross-checked somebody else's
+    server. There is ONE resolver, `apply.resolve_target`, so the two scripts
+    cannot drift again:  --url > CH_HTTP_URL > CH_HTTP_PORT > 8123 + offset.
+    """
+    import apply  # local: lint and self-test need no server-side code
+    try:
+        return apply.resolve_target(explicit_url)[0]
+    except apply.CouldNotRun as exc:
+        raise CouldNotRun(str(exc)) from None
 
 EXPECTED_TABLES = [
     "krn.trades", "krn.book_events", "krn.book_snapshots",
@@ -343,14 +360,15 @@ def scan(path, schema_decisions=True, aggregates_path=None):
 # --------------------------------------------------------------------------
 
 
-def ch_query(sql, url=DEFAULT_URL):
+def ch_query(sql, url=None):
+    url = url or resolve_url()
     import urllib.request
     req = urllib.request.Request(url, data=sql.encode("utf-8"), method="POST")
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read().decode("utf-8")
 
 
-def server_aggregates(url=DEFAULT_URL):
+def server_aggregates(url=None):
     out = ch_query(
         "SELECT name FROM system.functions WHERE is_aggregate ORDER BY name "
         "FORMAT TSVRaw", url)
@@ -499,6 +517,44 @@ def self_test():
     return failures
 
 
+# The default endpoint must follow STACK_PORT_OFFSET the way tools/stack.sh
+# does (ENC-1629). Each row: (environment, expected URL).
+URL_CASES = [
+    ({}, "http://127.0.0.1:8123/"),
+    ({"STACK_PORT_OFFSET": "0"}, "http://127.0.0.1:8123/"),
+    ({"STACK_PORT_OFFSET": "270"}, "http://127.0.0.1:8393/"),
+    ({"STACK_PORT_OFFSET": "0070"}, "http://127.0.0.1:8193/"),
+    ({"STACK_PORT_OFFSET": "270", "CH_HTTP_PORT": "9999"},
+     "http://127.0.0.1:9999/"),
+    ({"STACK_PORT_OFFSET": "270", "CH_HTTP_URL": "http://h:1/"}, "http://h:1/"),
+]
+
+
+def url_test():
+    keys = ("STACK_PORT_OFFSET", "CH_HTTP_URL", "CH_HTTP_PORT")
+    saved = {k: os.environ.get(k) for k in keys}
+    failures = 0
+    try:
+        for env, want in URL_CASES:
+            for k in keys:
+                os.environ.pop(k, None)
+            os.environ.update(env)
+            got = resolve_url()
+            ok = got == want
+            print("  [%s] %-58s -> %s" % ("ok" if ok else "FAIL",
+                                          env or "(nothing set)", got))
+            if not ok:
+                print("        expected %s" % want)
+                failures += 1
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return failures
+
+
 # --------------------------------------------------------------------------
 
 
@@ -514,7 +570,9 @@ def main(argv=None):
     p_lint.add_argument("--cross-check-aggregates", action="store_true",
                         help="also ask the server for its aggregate list and "
                              "fail if the committed snapshot no longer covers it")
-    p_lint.add_argument("--url", default=DEFAULT_URL)
+    p_lint.add_argument("--url", default=None,
+                        help="default: CH_HTTP_URL > CH_HTTP_PORT > "
+                             "8123 + STACK_PORT_OFFSET, as tools/stack.sh")
     p_lint.add_argument("--aggregates", default=None,
                         help="override the aggregate vocabulary file (exists so "
                              "the could-not-run path is testable)")
@@ -524,10 +582,14 @@ def main(argv=None):
 
     p_ref = sub.add_parser("refresh-aggregates",
                            help="re-derive clickhouse_aggregates.txt from a server")
-    p_ref.add_argument("--url", default=DEFAULT_URL)
+    p_ref.add_argument("--url", default=None)
 
     args = ap.parse_args(argv)
     try:
+        if getattr(args, "url", None) is None and (
+                args.cmd == "refresh-aggregates"
+                or getattr(args, "cross_check_aggregates", False)):
+            args.url = resolve_url()
         return _run(args)
     except CouldNotRun as exc:
         print("could not run: %s" % exc, file=sys.stderr)
@@ -542,7 +604,10 @@ def _run(args):
         print("\nand every ENC-1480 decision, undone in a copy of the real "
               "schema, must be rejected:")
         failures += mutant_test()
-        total = len(SELF_TESTS) + len(MUTANTS)
+        print("\nand the default server endpoint must follow STACK_PORT_OFFSET "
+              "as tools/stack.sh does:")
+        failures += url_test()
+        total = len(SELF_TESTS) + len(MUTANTS) + len(URL_CASES)
         if failures:
             print("SELF-TEST FAILED: %d of %d case(s)" % (failures, total))
             return 1
@@ -589,8 +654,8 @@ def _run(args):
                 % (len(missing), ", ".join(missing[:8]),
                    ", …" if len(missing) > 8 else ""))
         else:
-            print("  cross-check: snapshot covers all %d server aggregates"
-                  % len(live))
+            print("  cross-check: snapshot covers all %d server aggregates on %s"
+                  % (len(live), args.url))
 
     print("check_no_compute: %s" % facts["file"])
     print("  %d statements, %d bytes scanned, %d comment bytes stripped first"
