@@ -17,7 +17,7 @@
 //     book records are in `krn/data/BookRecord.hpp` (here, ENC-1550). The decode
 //     below turns a batch into these COLUMN-WISE, once per batch. That decode
 //     is the single Arrow->scalar boundary in the system
-//     (docs/data-layer.md C2). It exists because gma's DAG is a scalar push
+//     (docs/data-layer.md C2). It exists because krn's DAG is a scalar push
 //     pipeline — ArgType is a scalar variant and INode::onValue takes one
 //     StreamValue — and making it columnar is a rewrite of ~25 node types that
 //     this design explicitly does not take on.
@@ -111,7 +111,7 @@ std::shared_ptr<arrow::Schema> schemaFor(RecordKind kind);
 // Schema identity, written into every Arrow IPC stream's key-value metadata.
 // A reader that meets an unknown version refuses the stream rather than
 // guessing a column layout.
-inline constexpr std::string_view kSchemaVersionKey = "gma.schema_version";
+inline constexpr std::string_view kSchemaVersionKey = "krn.schema_version";
 inline constexpr std::int32_t     kSchemaVersion    = 1;
 
 // The version string carried in the metadata of every schema above, parsed

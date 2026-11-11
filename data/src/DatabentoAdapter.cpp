@@ -767,9 +767,9 @@ arrow::Status DatabentoAdapter::onMbo(const dbn::MboMsg& m) {
     case dbn::Side::Bid: resting = Side::Bid; break;
     case dbn::Side::Ask: resting = Side::Ask; break;
     case dbn::Side::None:
-      // No representation in data::Side — see kGmaFlagSideUnspecified.
+      // No representation in data::Side — see kKrnFlagSideUnspecified.
       sideKnown = false;
-      flags |= kGmaFlagSideUnspecified;
+      flags |= kKrnFlagSideUnspecified;
       ++stats_.sideUnspecified;
       break;
   }

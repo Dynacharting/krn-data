@@ -81,7 +81,7 @@ message(STATUS "krn_data: enabled (Arrow: ${KRN_DATA_ARROW_PROVENANCE})")
 # to a live ClickHouse, and a test that SKIPS when the server is absent looks
 # exactly like a test that passed -- the ENC-1095 failure, where three sessions
 # read a green 188/188 as renderer coverage. So the logic that can be wrong
-# (the gma.ingest_windows read rule, the CSV parse, the window arithmetic) is
+# (the krn.ingest_windows read rule, the CSV parse, the window arithmetic) is
 # unit-tested in krn_data_tests with no server at all, and the live exercise is
 # this binary, whose exit code is the verdict: 0 clean, 1 a finding, 2 COULD
 # NOT RUN. A missing server exits 2 and cannot be mistaken for a pass.

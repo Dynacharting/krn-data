@@ -33,8 +33,8 @@
 -- =========================================================================
 --
 -- SPEC D1/D2 govern: ClickHouse is indexed, compressed, columnar STORAGE AND
--- SELECTION, and gma performs 100% of the computation through one
--- implementation of every operator. A transpiler that reimplemented gma's math
+-- SELECTION, and krn performs 100% of the computation through one
+-- implementation of every operator. A transpiler that reimplemented krn's math
 -- in SQL would differ in float accumulation order, bucket edge inclusivity, EMA
 -- seeding and gap handling — and this system exists to read differences of that
 -- size as signal, so a discrepancy manufactured by the storage layer is
@@ -50,7 +50,7 @@
 --   * no MATERIALIZED VIEW producing bars, features or rollups
 --   * no MATERIALIZED or ALIAS column computing a value
 --   * no L2. No rollup table. No feature store. No bar table. (SPEC D4, docs §8.1)
--- Bars are produced by gma's TumblingWindow / BucketTime over the rows below.
+-- Bars are produced by krn's TumblingWindow / BucketTime over the rows below.
 --
 -- `data/schema/check_no_compute.py` asserts all of that against this file at
 -- any time, and `check_no_compute.py self-test` proves the assertion can fail.
@@ -82,11 +82,11 @@
 --
 --   `symbol` IS THE TICKER, `instrument_id` IS PROVENANCE (SPEC D7, docs §8.9).
 --   DBN's instrument_id is dataset-scoped and reassignable, while charts,
---   manifests and gma's streamKey all want "AAPL"; keying L1 on instrument_id
+--   manifests and krn's streamKey all want "AAPL"; keying L1 on instrument_id
 --   would make every query a symbology join and the store unreadable by hand.
 --   instrument_id is kept on every event row because it is what the records
 --   actually contain and it is how a row is traced back to the pull that
---   produced it. gma.symbology below holds the time-varying mapping.
+--   produced it. krn.symbology below holds the time-varying mapping.
 --
 --   ORDER BY (symbol, ts_event, provider_seq) on every event table. It matches
 --   the only read pattern there is — "this symbol, this time range" — so a
@@ -114,7 +114,7 @@
 --   D to reload symbol A also deletes symbol B's rows for D, and B's
 --   completeness row still says state=1 — so isComplete(B, D) answers true over
 --   an empty partition. The full invariant, and who owns it, is written at
---   gma.ingest_windows; docs §8.6 records the reload COST of day-granular
+--   krn.ingest_windows; docs §8.6 records the reload COST of day-granular
 --   partitions but not this invalidation. Moot at one symbol, which is the
 --   reason to write it down now instead of meeting it at the universe. The
 --   finer-grained alternative docs §8.6 names (DELETE WHERE symbol = … AND
@@ -151,18 +151,18 @@
 --   is DROP PARTITION + reload from the RETAINED raw DBN files (SPEC D6 — the
 --   files are load-bearing, not hygiene: the reload must reload from
 --   something, and re-pulling from Databento spends the plan allowance this
---   architecture exists to work around), with gma.ingest_windows as the
+--   architecture exists to work around), with krn.ingest_windows as the
 --   authority on what is loaded. Pick one mechanism or the other, never both: a
 --   ReplacingMergeTree with a non-unique key collapses rows no matter how you
 --   re-ingest. If the DBN files are ever not retained, a ReplacingMergeTree
 --   with a PROVABLY unique book_events key becomes mandatory and C12 returns.
 --
---   EXACTLY ONE TABLE IS ReplacingMergeTree: gma.symbology, and it says why at
+--   EXACTLY ONE TABLE IS ReplacingMergeTree: krn.symbology, and it says why at
 --   its definition. Its key is unique by construction, the table is tiny, and
 --   its version column is a WRITE clock (`ingested_at`), which is what makes
 --   closing a half-open interval a replace rather than two contradictory rows.
 --
---   gma.ingest_windows was ReplacingMergeTree(completed_at) in revision 2 and is
+--   krn.ingest_windows was ReplacingMergeTree(completed_at) in revision 2 and is
 --   NOT any more. completed_at is zero while a window is in flight, so on a
 --   re-ingest the engine resolves to the STALE complete row and then deletes
 --   the in-flight one at merge time — an incomplete window reads as complete,
@@ -171,12 +171,12 @@
 --   append-only transition log, with a read rule written down beside it.
 -- ---------------------------------------------------------------------------
 
-CREATE DATABASE IF NOT EXISTS gma;
+CREATE DATABASE IF NOT EXISTS krn;
 
 -- ---------------------------------------------------------------------------
 -- trades (docs §8.4)
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.trades
+CREATE TABLE IF NOT EXISTS krn.trades
 (
     ts_event      DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
     ts_recv       DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
@@ -234,7 +234,7 @@ SETTINGS index_granularity = 8192;
 -- so neither can carry "absent"; and a Nullable column would cost a mask on
 -- the hottest column in the table.
 --
--- CREATE TABLE IF NOT EXISTS gma.quotes
+-- CREATE TABLE IF NOT EXISTS krn.quotes
 -- (
 --     ts_event      DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
 --     ts_recv       DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
@@ -286,7 +286,7 @@ SETTINGS index_granularity = 8192;
 -- §8.6's stated DDL. Adding the two columns back is a one-line change IF T6
 -- says they earn their keep.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.book_events
+CREATE TABLE IF NOT EXISTS krn.book_events
 (
     ts_event      DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
     ts_recv       DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
@@ -344,7 +344,7 @@ SETTINGS index_granularity = 8192;
 -- Nested column into parallel arrays (levels.side, levels.price, …) and applies
 -- the column's CODEC to each of them.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.book_snapshots
+CREATE TABLE IF NOT EXISTS krn.book_snapshots
 (
     ts_event      DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
     ts_recv       DateTime64(9, 'UTC')  CODEC(DoubleDelta, ZSTD(1)),
@@ -406,7 +406,7 @@ SETTINGS index_granularity = 1024;   -- snapshots are wide and rare
 -- closed" and "the interval is still open" are two rows with the same key and
 -- the engine may keep either.
 --
--- READ-PATH HAZARD, same shape as gma.ingest_windows below: a plain SELECT can
+-- READ-PATH HAZARD, same shape as krn.ingest_windows below: a plain SELECT can
 -- return the pre-merge stale row, so the open-ended valid_to can outlive its
 -- closure. Resolve the version on read (FINAL, or an argMax over ingested_at)
 -- — and see the ingest_windows note for why doing so is not a D2 violation.
@@ -416,7 +416,7 @@ SETTINGS index_granularity = 1024;   -- snapshots are wide and rare
 -- what a continuous series should do about it is reference data and out of
 -- scope (SPEC Non-goals).
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.symbology
+CREATE TABLE IF NOT EXISTS krn.symbology
 (
     dataset       LowCardinality(String),   -- e.g. 'XNAS.ITCH'
     instrument_id UInt32,
@@ -486,7 +486,7 @@ SETTINGS index_granularity = 1024;
 -- NEEDS VERSION RESOLUTION EITHER WAY — see the read rule below.
 -- ReplacingMergeTree would then buy only storage compaction, on a table with a
 -- handful of rows per symbol-day, in exchange for destroying the re-ingest
--- audit trail. So: plain MergeTree, per SPEC D5's default, and gma.symbology
+-- audit trail. So: plain MergeTree, per SPEC D5's default, and krn.symbology
 -- stays the ONE exception in this file — its version column IS a write clock
 -- (`ingested_at`), verified in the same run resolving an open interval's later
 -- closure correctly.
@@ -562,7 +562,7 @@ SETTINGS index_granularity = 1024;
 -- Concretely, dropping partition P obliges the job to write, for every
 -- (symbol, kind) with a recorded window intersecting P, a fresh row at
 -- state = 3 (invalidated) or state = 0 (in flight, if it is about to reload
--- that symbol too). `gma.gaps` is partitioned to the same key so the same
+-- that symbol too). `krn.gaps` is partitioned to the same key so the same
 -- DROP PARTITION removes its rows for P — see that table.
 -- Nothing in ClickHouse checks any of this: there is no foreign key and no
 -- trigger. It is a code obligation, and the ingest job's tests are where it
@@ -570,8 +570,8 @@ SETTINGS index_granularity = 1024;
 --
 -- AND RESOLVING THE NEWEST ROW IS NOT A D2 VIOLATION, so do not "fix" it by
 -- removing the resolution. D2 governs the MANIFEST -> SELECT path that feeds
--- operators: values that reach gma's DAG must arrive unaggregated, because a
--- value computed in SQL is a second implementation of gma's math (D1). This
+-- operators: values that reach krn's DAG must arrive unaggregated, because a
+-- value computed in SQL is a second implementation of krn's math (D1). This
 -- read is control-plane metadata — "is this window loaded", answered before any
 -- market row is selected — and its result is a boolean the planner acts on, not
 -- a number any operator consumes. An ORDER BY … LIMIT 1, or an argMax over
@@ -600,7 +600,7 @@ SETTINGS index_granularity = 1024;
 -- divergence from revision 2's — is this file's decision to own, not a doc
 -- citation to lean on.)
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.ingest_windows
+CREATE TABLE IF NOT EXISTS krn.ingest_windows
 (
     symbol        LowCardinality(String),
     -- 'trades' | 'book_events' | 'book_snapshots'  (and 'quotes' if that table
@@ -668,7 +668,7 @@ SETTINGS index_granularity = 1024;
 -- key as the event tables, so re-ingesting a day drops its gap rows with the
 -- rest of it and one `DROP PARTITION` per day is uniform across trades,
 -- book_events, book_snapshots and gaps. The per-symbol collateral damage that
--- creates is covered by the invariant in gma.ingest_windows above — this table
+-- creates is covered by the invariant in krn.ingest_windows above — this table
 -- is named there for exactly that reason.
 --
 -- The cost, recorded: the detector must supply event-time bounds for the hole,
@@ -676,7 +676,7 @@ SETTINGS index_granularity = 1024;
 -- messages, and both carry ts_event — but it is an obligation on ENC-1483 that
 -- revision 2 did not impose. ts_detected stays as a diagnostic column.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gma.gaps
+CREATE TABLE IF NOT EXISTS krn.gaps
 (
     -- Event-time bounds of the missing run, half-open [ts_from, ts_to): the
     -- ts_event of the last message before the hole and of the first message
@@ -727,9 +727,9 @@ SETTINGS index_granularity = 1024;
 --
 -- Enabling this when the universe grows is uncommenting it:
 --
--- ALTER TABLE gma.trades      ADD PROJECTION IF NOT EXISTS p_time_symbol
+-- ALTER TABLE krn.trades      ADD PROJECTION IF NOT EXISTS p_time_symbol
 --   ( SELECT * ORDER BY (ts_event, symbol) );
--- ALTER TABLE gma.book_events ADD PROJECTION IF NOT EXISTS p_time_symbol
+-- ALTER TABLE krn.book_events ADD PROJECTION IF NOT EXISTS p_time_symbol
 --   ( SELECT * ORDER BY (ts_event, symbol) );
 --
 -- and then MATERIALIZE PROJECTION on each, which rewrites every existing part.

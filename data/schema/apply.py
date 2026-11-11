@@ -20,7 +20,7 @@ and normalized away, not ignored: the server backticks identifiers, writes
 `DateTime64(9, 'UTC')` with its own spacing, and flattens `Nested(...)` into
 `levels.side Array(UInt8)` and friends.
 
-`--fresh` DROPs the `gma` database first. It exists so the acceptance run can be
+`--fresh` DROPs the `krn` database first. It exists so the acceptance run can be
 "from scratch, then twice in a row"; it destroys every row in L1 and there is no
 undo other than re-ingest (which SPEC D6 does make possible — the raw DBN files
 are retained precisely so this is survivable).
@@ -64,7 +64,7 @@ def resolve_target(explicit_url=None):
     """Work out which ClickHouse this invocation is talking to.
 
     ⚠ THIS IS A SAFETY-CRITICAL FUNCTION, not plumbing. `apply --fresh` runs
-    `DROP DATABASE gma`, and the first version of this file hardcoded
+    `DROP DATABASE krn`, and the first version of this file hardcoded
     `http://127.0.0.1:8123/`. tools/stack.sh resolves
     `CH_HTTP_PORT := 8123 + STACK_PORT_OFFSET`, so a worktree at
     STACK_PORT_OFFSET=270 runs its own server on 8393 — and the hardcoded
@@ -128,7 +128,7 @@ def guard_fresh(url, how, offset, offset_was_set, explicit):
     if offset_was_set and offset != 0 and not explicit:
         raise CouldNotRun(
             "refusing --fresh: STACK_PORT_OFFSET=%d but no explicit target.\n"
-            "  --fresh runs DROP DATABASE gma, and a destructive default must "
+            "  --fresh runs DROP DATABASE krn, and a destructive default must "
             "not be reachable by being in the wrong directory.\n"
             "  Derived target would be %s. Name it on purpose:\n"
             "      CH_HTTP_URL=%s ./apply.sh --fresh\n"
@@ -140,7 +140,7 @@ def guard_fresh_rows(url, allow_rows):
     """The second refusal: --fresh must not silently destroy rows."""
     try:
         out = ch("SELECT name, total_rows FROM system.tables "
-                 "WHERE database = 'gma' AND total_rows > 0 "
+                 "WHERE database = 'krn' AND total_rows > 0 "
                  "ORDER BY name FORMAT TSVRaw", url)
     except RuntimeError:
         return                      # no server / no database: nothing to lose
@@ -149,10 +149,10 @@ def guard_fresh_rows(url, allow_rows):
         return
     rows = ", ".join("%s=%s" % (n, r) for n, r in populated)
     if allow_rows:
-        print("  --yes-destroy-rows: dropping a POPULATED gma (%s)" % rows)
+        print("  --yes-destroy-rows: dropping a POPULATED krn (%s)" % rows)
         return
     raise CouldNotRun(
-        "refusing --fresh: gma at %s holds rows (%s).\n"
+        "refusing --fresh: krn at %s holds rows (%s).\n"
         "  DROP DATABASE destroys them. Re-ingest is possible (SPEC D6 retains "
         "the raw DBN files) but it is not free and it is not silent.\n"
         "  Pass --yes-destroy-rows if that is genuinely what you want."
@@ -204,16 +204,16 @@ def cmd_apply(args):
     print("server:  %s" % ch("SELECT version() FORMAT TSVRaw", args.url).strip())
     if args.fresh:
         guard_fresh_rows(args.url, args.yes_destroy_rows)
-        print("--fresh: DROP DATABASE gma on %s  (destroys every L1 row)"
+        print("--fresh: DROP DATABASE krn on %s  (destroys every L1 row)"
               % args.url)
-        ch("DROP DATABASE IF EXISTS gma SYNC", args.url)
+        ch("DROP DATABASE IF EXISTS krn SYNC", args.url)
     print("applying %s — %d statements" % (os.path.relpath(SCHEMA), len(statements)))
     for i, stmt in enumerate(statements, 1):
         ch(stmt, args.url)
         print("  [%d/%d] ok  %s" % (i, len(statements), first_line(stmt)))
-    names = ch("SELECT name FROM system.tables WHERE database = 'gma' "
+    names = ch("SELECT name FROM system.tables WHERE database = 'krn' "
                "ORDER BY name FORMAT TSVRaw", args.url).split()
-    print("gma now holds %d tables: %s" % (len(names), ", ".join(names)))
+    print("krn now holds %d tables: %s" % (len(names), ", ".join(names)))
     return 0
 
 
@@ -299,13 +299,13 @@ def _diff_table(name, want, got):
 
 
 def _bare_name(qualified):
-    """`gma.trades` -> `trades`. Raises CouldNotRun rather than IndexError on a
+    """`krn.trades` -> `trades`. Raises CouldNotRun rather than IndexError on a
     `CREATE TABLE` with no database prefix — an unqualified name means the
     statement depends on the connection's current database, which is not
     something this tool should guess at while comparing a schema."""
     if "." not in qualified:
         raise CouldNotRun(
-            "CREATE TABLE %s has no database prefix. Qualify it (gma.%s) — an "
+            "CREATE TABLE %s has no database prefix. Qualify it (krn.%s) — an "
             "unqualified name resolves against the session's current database, "
             "so the file would not say which server-side table it describes."
             % (qualified, qualified))
@@ -339,17 +339,17 @@ def cmd_verify(args):
         diffs.extend(table_diffs)
 
     # The server must hold exactly the file's tables and nothing else. The one
-    # that matters is gma.quotes: it is defined-but-commented because nothing
+    # that matters is krn.quotes: it is defined-but-commented because nothing
     # populates it without mbp-1 (SPEC Non-goals), and an empty table reads as
     # "the market had no quotes" — docs §8.8's failure.
-    live = set(ch("SELECT name FROM system.tables WHERE database = 'gma' "
+    live = set(ch("SELECT name FROM system.tables WHERE database = 'krn' "
                   "ORDER BY name FORMAT TSVRaw", args.url).split())
     extra = sorted(live - {_bare_name(t) for t in wanted})
     if extra:
-        diffs.append("gma holds table(s) the file does not create: %s"
+        diffs.append("krn holds table(s) the file does not create: %s"
                      % ", ".join(extra))
     if "quotes" in live:
-        diffs.append("gma.quotes exists on the server. The file leaves it "
+        diffs.append("krn.quotes exists on the server. The file leaves it "
                      "commented (SPEC Non-goals); an empty quotes table reads "
                      "as a quoteless market.")
 
@@ -358,19 +358,19 @@ def cmd_verify(args):
         for d in diffs:
             print("    - %s" % d)
         return 1
-    print("  SHOW CREATE TABLE matches the file for all %d tables; gma holds "
+    print("  SHOW CREATE TABLE matches the file for all %d tables; krn holds "
           "nothing else" % len(wanted))
     return 0
 
 
-PROBE_DB = "gma_verify_probe"
+PROBE_DB = "krn_verify_probe"
 
 
 def cmd_prove_verify(args):
     """Show the verifier failing. A comparison never observed reporting a
     difference has not been shown to compare.
 
-    Done in a throwaway database rather than by mutating `gma`, so it is safe to
+    Done in a throwaway database rather than by mutating `krn`, so it is safe to
     run as part of the acceptance script. The mutation is asserted to have taken
     effect before its detection is claimed — a no-op mutation reads exactly like
     a passing gate.
@@ -379,10 +379,10 @@ def cmd_prove_verify(args):
     src = None
     for stmt in statements:
         if ddl.is_create_table(stmt) and \
-                ddl.parse_create_table(stmt)["table"] == "gma.gaps":
+                ddl.parse_create_table(stmt)["table"] == "krn.gaps":
             src = stmt
     if src is None:
-        print("could not run: gma.gaps not found in %s" % SCHEMA, file=sys.stderr)
+        print("could not run: krn.gaps not found in %s" % SCHEMA, file=sys.stderr)
         return 2
     want = ddl.parse_create_table(src)
 
@@ -430,7 +430,7 @@ def cmd_prove_verify(args):
             return 2
         print("  mutation applied to %s.gaps: %s" % (PROBE_DB, "; ".join(applied)))
 
-        diffs = _diff_table("gma.gaps", want, got)
+        diffs = _diff_table("krn.gaps", want, got)
         for d in diffs:
             print("    detected: %s" % d)
         if len(diffs) < 3:
@@ -456,7 +456,7 @@ def _tbl(columns=None, indexes=None, **clauses):
         columns = [("ts", "DateTime64(9,'UTC')", "", "CODEC(DoubleDelta,ZSTD(1))"),
                    ("symbol", "LowCardinality(String)", "", ""),
                    ("updated_at", "DateTime64(3,'UTC')", "DEFAULT now64(3)", "")]
-    return {"table": "gma.t", "columns": list(columns),
+    return {"table": "krn.t", "columns": list(columns),
             "indexes": list(indexes or []), "clauses": base}
 
 
@@ -494,7 +494,7 @@ def _diff_cases():
         ("PARTITION BY differs", _tbl(),
          _tbl(**{"PARTITION BY": "toYYYYMMDD(updated_at)"}), 1),
         # The DEFAULT case: a missing column default is invisible to a type
-        # comparison, and on gma.ingest_windows.updated_at it is the
+        # comparison, and on krn.ingest_windows.updated_at it is the
         # zero-valued-clock defect.
         ("column DEFAULT missing on the server", _tbl(),
          _tbl(columns=no_default), 1),
@@ -514,7 +514,7 @@ def cmd_self_test(_args):
           "shape of difference, and nothing when there is none:")
     failures = 0
     for label, want, got, min_diffs in _diff_cases():
-        diffs = _diff_table("gma.t", want, got)
+        diffs = _diff_table("krn.t", want, got)
         ok = (len(diffs) == 0) if min_diffs == 0 else (len(diffs) >= min_diffs)
         print("  [%s] %-46s -> %d diff(s), want %s"
               % ("ok" if ok else "FAIL", label, len(diffs),
@@ -532,7 +532,7 @@ def cmd_self_test(_args):
     except CouldNotRun:
         print("  [ok] %-46s -> CouldNotRun (exit 2, not a traceback)"
               % "unqualified table name")
-    if _bare_name("gma.trades") != "trades":
+    if _bare_name("krn.trades") != "trades":
         print("  [FAIL] qualified table name mis-parsed")
         failures += 1
 
@@ -616,9 +616,9 @@ def main(argv=None):
                             "CH_HTTP_URL, CH_HTTP_PORT and STACK_PORT_OFFSET")
         if cmd == "apply":
             p.add_argument("--fresh", action="store_true",
-                           help="DROP DATABASE gma first — DESTRUCTIVE")
+                           help="DROP DATABASE krn first — DESTRUCTIVE")
             p.add_argument("--yes-destroy-rows", action="store_true",
-                           help="allow --fresh to drop a gma that holds rows")
+                           help="allow --fresh to drop a krn that holds rows")
     sub.add_parser("emit")
     sub.add_parser("self-test")
     args = ap.parse_args(argv)

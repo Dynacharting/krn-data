@@ -1,5 +1,5 @@
 -- Fixture: a MATERIALIZED column. Expected verdict: REJECT.
--- `mid` is gma's arithmetic, executed by ClickHouse at insert time. It is a
+-- `mid` is krn's arithmetic, executed by ClickHouse at insert time. It is a
 -- second implementation of an operator (SPEC D1) hidden in a column default.
 CREATE TABLE IF NOT EXISTS fixture.quotes_mid
 (

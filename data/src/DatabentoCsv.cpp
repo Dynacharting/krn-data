@@ -124,13 +124,13 @@ struct Common {
 
   // ⚠ CODE-REVIEW FINDING #10, AND IT SAT DIRECTLY UNDER THE COMPLETENESS
   // CLAIM. `deliveredEnd()` publishes `lastTsEvent` as the EXCLUSIVE end written
-  // to `gma.ingest_windows`, and the justification for taking the last record's
+  // to `krn.ingest_windows`, and the justification for taking the last record's
   // timestamp was "the vendor stops at `limit` records in time order" — an
   // UNCHECKED ASSUMPTION ABOUT THE INPUT. If one row arrives out of order, the
   // last row's `ts_event` is not the maximum, `recordsAtLastTsEvent` resets and
   // miscounts the final group, and the recorded window claims coverage it does
   // not have. An unasserted assumption underneath a completeness claim is the
-  // same shape of defect as everything else `gma.ingest_windows` exists to stop.
+  // same shape of defect as everything else `krn.ingest_windows` exists to stop.
   //
   // So: the maximum is tracked independently of the last row, monotonicity is
   // ASSERTED, and a violation is a refusal rather than a smaller number. The
@@ -196,7 +196,7 @@ struct Common {
           ". The recorded window's exclusive end is the LAST record's ts_event, "
           "and that is only the delivered end if the vendor emits in time order "
           "- which this file does not. Publishing it anyway would write a "
-          "`gma.ingest_windows` claim that is short at one end and silently "
+          "`krn.ingest_windows` claim that is short at one end and silently "
           "wrong at the other (SPEC D11). Refused rather than guessed; if "
           "out-of-order delivery is real for this dataset, the window end has "
           "to become the running maximum AND the completeness claim has to say "
@@ -236,7 +236,7 @@ struct Common {
       return arrow::Status::Invalid(
           "CSV held no rows, so no instrument_id -> ticker mapping could be "
           "harvested. An empty pull is refused rather than written as an "
-          "ingested window: `gma.ingest_windows` would then assert coverage of "
+          "ingested window: `krn.ingest_windows` would then assert coverage of "
           "a window with nothing in it (docs/data-layer.md §8.8).");
     }
     return arrow::Status::OK();

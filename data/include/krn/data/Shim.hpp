@@ -4,7 +4,7 @@
 // NOT IN THE BUILD. See data/README.md.
 //
 // The centerpiece. It makes ClickHouse behave as an indexed column store for
-// gma's benefit, and gets rows into gma fast enough that gma's own compute is
+// krn's benefit, and gets rows into krn fast enough that krn's own compute is
 // the bottleneck rather than the I/O.
 //
 // THREE PARTS, AND THE FIRST IS THE WHOLE DESIGN:
@@ -38,8 +38,8 @@ namespace krn::data {
 // Planner
 // ---------------------------------------------------------------------------
 
-// One shard of work: a (symbol, day) tile. gma's semantics are already
-// per-symbol, so shards are independent COMPLETE gma runs and need no
+// One shard of work: a (symbol, day) tile. krn's semantics are already
+// per-symbol, so shards are independent COMPLETE krn runs and need no
 // cross-merge — which is what makes sharding semantically free and is the
 // scaling story that preserves one implementation (docs §7).
 struct Shard {
@@ -118,7 +118,7 @@ private:
 // ---------------------------------------------------------------------------
 
 // Parses a generated statement and rejects any construct that would move
-// computation out of gma. A violation is a BUILD-TIME FAILURE, not a runtime
+// computation out of krn. A violation is a BUILD-TIME FAILURE, not a runtime
 // warning.
 //
 // Checked over the whole request corpus (tests/treebuilder/corpus_requests.json,
@@ -156,7 +156,7 @@ std::string renderSelect(const Selection& sel, std::string_view database);
 // ---------------------------------------------------------------------------
 
 struct ShimConfig {
-  // Bounded buffering. ClickHouse reads faster than gma computes; without a
+  // Bounded buffering. ClickHouse reads faster than krn computes; without a
   // bound a month-long research scan buffers a month in RAM (docs §5.2).
   std::size_t  maxQueuedBlocks = 0;
   std::size_t  blockRows = 0;        // tuned to cache
@@ -196,7 +196,7 @@ public:
     std::uint64_t rowsDecoded  = 0;
     std::uint64_t bytesRead    = 0;
     std::uint64_t shardsRun    = 0;
-    std::uint64_t stallsOnBackpressure = 0;   // gma is the bottleneck: good
+    std::uint64_t stallsOnBackpressure = 0;   // krn is the bottleneck: good
   };
   Stats stats() const;
 

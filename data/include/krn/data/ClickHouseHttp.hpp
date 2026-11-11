@@ -59,7 +59,7 @@ namespace krn::data::ch {
 // running at STACK_PORT_OFFSET=160 resolves to 8283 and reaches its OWN server
 // rather than the offset-zero store. apply.py's docstring records what the
 // hardcoded `http://127.0.0.1:8123/` cost: `apply --fresh` from an offset
-// worktree dropped somebody else's `gma` database. This job writes rows and
+// worktree dropped somebody else's `krn` database. This job writes rows and
 // drops partitions, so it resolves the target the same way and PRINTS the
 // resolution.
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# KRN Data Layer — ClickHouse selects, gma computes
+# KRN Data Layer — ClickHouse selects, krn computes
 
 **Status:** design, revision 3. Nothing implemented. ENC-1478.
 **Locked decisions + ticket breakdown:** `specs/2026-10-14-krn-data-layer/SPEC.md`.
@@ -11,30 +11,30 @@
 Raw Databento **trades + mbo** (L3, per-order) for **one symbol over seven days** lands in
 a single-node, self-hosted ClickHouse **L1** store. There are no derived layers. ClickHouse
 is indexed, compressed, columnar **storage and selection only** — it never computes a value
-gma could compute. A **shim** reads a gma manifest, derives the minimal lossless `SELECT`
-that satisfies it, and streams column blocks into gma with no row materialization. gma
+krn could compute. A **shim** reads a krn manifest, derives the minimal lossless `SELECT`
+that satisfies it, and streams column blocks into krn with no row materialization. krn
 performs **100% of the computation**, through the same operator code whether it is live,
 replaying, filling a chart, or running headless research.
 
 That boundary is a product requirement, not a preference. A transpiler that reimplemented
-gma's math in SQL would produce small numerical differences — float accumulation order,
+krn's math in SQL would produce small numerical differences — float accumulation order,
 bucket edge inclusivity, EMA seeding, gap handling — and this system's business is reading
 differences of that size as signal. There is no tolerance at which that is safe.
 
 **The first deliverable is a measurement, not a feature.** At one symbol and seven days
 almost everything built for scale is premature, and the one number the rest of the design
-depends on — whether gma can consume rows as fast as ClickHouse delivers them — is cheaply
+depends on — whether krn can consume rows as fast as ClickHouse delivers them — is cheaply
 measurable on real data today. §14 is therefore the front of the ticket order, not the back.
 
 ---
 
 ## 1. The one decision
 
-> **ClickHouse does selection. gma does computation. Nothing computes a value twice.**
+> **ClickHouse does selection. krn does computation. Nothing computes a value twice.**
 
 ### 1.1 Why a transpiler is not an option
 
-Compile a gma graph to SQL and let ClickHouse execute it, and the chart's **filled** region
+Compile a krn graph to SQL and let ClickHouse execute it, and the chart's **filled** region
 and its **live** region were produced by two different implementations. Even a flawless
 translation differs: float32/float64 accumulation and summation order, window-boundary
 inclusivity, EMA/RSI seeding over the first N samples, NaN and empty-bucket handling,
@@ -48,7 +48,7 @@ A diff-based parity gate does not rescue it: two engines will not agree bit-for-
 floating-point aggregation, so such a gate must carry a tolerance, and the tolerance is
 precisely the noise floor we cannot accept.
 
-**So there is one implementation of every operator, and it is gma's.**
+**So there is one implementation of every operator, and it is krn's.**
 
 ### 1.2 Why selection is safe
 
@@ -162,7 +162,7 @@ No history, persistence, replay or backfill. Event timestamps are extracted
   `baseMs` re-runs `createBuffer` and **zeroes every connected client's buffer** (ENC-1101).
   With `ordinal uint32`, **history before `baseMs` is not representable** (§10).
 - **DynaCharting does not speak Arrow.** It consumes packed `float32` via `PackAppend`.
-  Arrow stops at gma/embassy.
+  Arrow stops at krn/embassy.
 - **No chart-fill path exists.** `customer-layer/src/api/history.ts` is *pipeline build*
   history (ENC-825), not market data.
 
@@ -198,7 +198,7 @@ void onRecord(const data::TickRecord& rec);     // new: resolved fields, no DOM
 
 The JSON path stays for the legacy TCP / `market.wsclient` ingress. Two ingress shapes is a
 cost; folding them is a bigger one. This is **not** a question about Arrow's reach — Arrow
-is the shim's currency and stops at its decode; gma's operators stay scalar because §1
+is the shim's currency and stops at its decode; krn's operators stay scalar because §1
 forbids a second implementation and rewriting them *is* one.
 
 ### C3 — No sequence number on the engine value path, and none on `TickEvent`
@@ -227,7 +227,7 @@ The outbox drops `update` frames by design above 256 queued, and
 parity recording are captured at the `Responder`'s send function, upstream of the outbox
 (§11).
 
-### C6 — gma's hot path is transport-bound, and with MBO that is the whole cost  **(the measurement)**
+### C6 — krn's hot path is transport-bound, and with MBO that is the whole cost  **(the measurement)**
 
 Per value today: a `std::string` symbol copy, a virtual call per node, a
 `ThreadPool::post` hop for every non-strand node, an `AtomicStore` write under a
@@ -261,7 +261,7 @@ remaining `int64 → double` wants `Price`-typed overloads eventually. (Formerly
 | profile | store | footprint |
 |---|---|---|
 | **research / ingest** (your local machine) | single-node self-hosted ClickHouse L1 | a required service, by design |
-| **client deployment** | live-only, or reads a central L1 over the wire | gma + a wire client; no local store |
+| **client deployment** | live-only, or reads a central L1 over the wire | krn + a wire client; no local store |
 
 Both are `IL1Store` configurations plus two build profiles. This also resolves the
 sovereignty-vs-central-hosting contradiction into a profile choice. **And the dependency
@@ -281,7 +281,7 @@ where the sort key is unique — and for `book_events` it is not, so a backgroun
 silently delete a real row in a way indistinguishable from a gap.
 
 **Resolved by changing the re-ingest mechanism instead of the key** (§8.6): plain
-`MergeTree`, with `gma.ingest_windows` as the authority and re-ingest by `DROP PARTITION` +
+`MergeTree`, with `krn.ingest_windows` as the authority and re-ingest by `DROP PARTITION` +
 reload from the retained DBN files. No dedup means nothing can collapse two distinct MBO
 records, so **the sort key no longer needs to be unique**. Whether `action, order_id` joins
 the key is now a granule-skipping question, measured in T6, not a correctness gate.
@@ -356,8 +356,8 @@ grow it without limit, and `maxSymbols` does not cover it. Wants a cap.
 Six rules:
 
 1. **ClickHouse computes nothing semantic.** Enforced by the lint, not a diff.
-2. **One implementation of every operator**, in gma, shared by every consumer.
-3. **gma owns no durability.** It reads L1; it never writes the raw path.
+2. **One implementation of every operator**, in krn, shared by every consumer.
+3. **krn owns no durability.** It reads L1; it never writes the raw path.
 4. **One conversion point** — column blocks → POD, column-wise, in the shim's decode.
 5. **The splice lives in `ISource`** and nowhere else.
 6. **`krn_data` depends on `krn_engine`, never the reverse.** Arrow and the ClickHouse
@@ -396,10 +396,10 @@ work.
 1. **Column blocks, not rows.** Native protocol speaks columns; HTTP speaks `FORMAT
    ArrowStream`. **Self-hosted on loopback makes native the expected answer** — no network,
    and HTTP framing is pure overhead — but it is **B1**, measured, not assumed.
-2. **Zero-copy** into gma's address space where the wire format permits.
-3. **Bounded buffering with back-pressure.** ClickHouse reads faster than gma computes;
+2. **Zero-copy** into krn's address space where the wire format permits.
+3. **Bounded buffering with back-pressure.** ClickHouse reads faster than krn computes;
    without a bound a long scan buffers it all in RAM. A stall here is *good news* — it
-   means gma is the bottleneck, which is what B2 is trying to establish.
+   means krn is the bottleneck, which is what B2 is trying to establish.
 4. **Order preservation**: PK order within a shard; no multi-part merge that interleaves.
 5. **Batch size tuned to cache**, not convenience.
 
@@ -440,7 +440,7 @@ a **build-time failure**, not a runtime warning:
 ```
 krn_shim_sql_lint:  planner output for corpus graph 86 contains
                     aggregate function 'avg' in projection list
-                    -> computation must not leave gma (docs/data-layer.md §1)
+                    -> computation must not leave krn (docs/data-layer.md §1)
 ```
 
 Run over `tests/treebuilder/corpus_requests.json` (272 entries), this asserts no manifest in
@@ -453,7 +453,7 @@ fixture registered `WILL_FAIL`.
 
 ---
 
-## 6. gma's fast path — transport, not semantics
+## 6. krn's fast path — transport, not semantics
 
 The performance budget. **None of it touches an operator.** Each row stays bit-identical by
 construction: the same function, called in the same order, on the same arithmetic. Only
@@ -467,7 +467,7 @@ what happens *between* calls changes.
 | no `AtomicStore` write per derived value | write only what a pull node reads | none |
 | amortized dispatch | batch the **drive loop**; operators unchanged | none |
 
-Measure in that order (B2) and stop when gma beats the scan. **The first four need no node
+Measure in that order (B2) and stop when krn beats the scan. **The first four need no node
 changes at all.**
 
 If that is not enough, **opt-in per-node batch paths** — a `Worker` consuming a contiguous
@@ -482,9 +482,9 @@ changes accumulation order. That is a second implementation wearing a different 
 
 ## 7. Scale: shard, don't transpile — deferred
 
-One implementation means gma touches every row, and MBO at the full universe is billions.
-The answer preserving identical semantics: **gma's semantics are already per-symbol**, so
-partition by `(symbol, day)`, run N independent complete gma computations, concatenate. No
+One implementation means krn touches every row, and MBO at the full universe is billions.
+The answer preserving identical semantics: **krn's semantics are already per-symbol**, so
+partition by `(symbol, day)`, run N independent complete krn computations, concatenate. No
 new code path, no merge semantics, nothing to diverge.
 
 **Deferred at current scale** — one symbol × 7 days is 7 tiles and nothing to parallelize.
@@ -577,7 +577,7 @@ ORDER BY (symbol, ts_event, provider_seq)
 
 **Plain `MergeTree`, not `ReplacingMergeTree`.** Re-pulling windows will happen — a gap, a
 correction, a schema change — and the mechanism is `DROP PARTITION` + reload from the
-retained DBN files, with `gma.ingest_windows` as the authority on what is loaded.
+retained DBN files, with `krn.ingest_windows` as the authority on what is loaded.
 
 Why this and not dedup:
 
@@ -636,7 +636,7 @@ WITHDRAWN (ENC-1483).** It was true of revision 2's one-row-per-window
 window and one session write at least two rows (`state=0` then `state=1`), and a failed run
 writes three. ENC-1483's first ingest of two windows produced exactly **four** rows.
 Uniqueness is not what makes the table readable and never was — **the read rule is**, written
-out in full beside `CREATE TABLE gma.ingest_windows` in `data/schema/clickhouse.sql`:
+out in full beside `CREATE TABLE krn.ingest_windows` in `data/schema/clickhouse.sql`:
 *newest row by `updated_at` per recorded `(symbol, kind, from_ts, to_ts)`, require
 `state = 1`, then test **coverage** of the request.* It is implemented once, in
 `data/include/krn/data/IngestWindows.hpp`, and it is correct whether or not a re-ingest reuses
@@ -665,11 +665,11 @@ whose range holds zero rows is a lie, and `krn_ingest verify` checks exactly tha
 ### 8.9 Symbol identity — ticker as the key, `instrument_id` for provenance
 
 DBN records carry `instrument_id`, which is dataset-scoped and reassignable; humans, charts
-and manifests all refer to tickers; and gma's `streamKey` is an opaque string that wants to
+and manifests all refer to tickers; and krn's `streamKey` is an opaque string that wants to
 be `"AAPL"`.
 
 **Decision: `symbol` = `raw_symbol` (the ticker) is the primary key's leading column.
-`instrument_id` is retained as a column. A `gma.symbology` table holds the time-varying
+`instrument_id` is retained as a column. A `krn.symbology` table holds the time-varying
 mapping.**
 
 - Keying L1 on `instrument_id` would make every query require a symbology join and the
@@ -682,7 +682,7 @@ mapping.**
   archaeology.
 
 ```sql
-CREATE TABLE IF NOT EXISTS gma.symbology
+CREATE TABLE IF NOT EXISTS krn.symbology
 ( dataset LowCardinality(String), instrument_id UInt32,
   raw_symbol LowCardinality(String),
   valid_from DateTime64(9,'UTC'), valid_to DateTime64(9,'UTC'),  -- half-open
@@ -709,7 +709,7 @@ of `trades`, not a dataset-day, and reassignment is a between-days event. The fu
 question still needs a full day. What T5 *did* settle here is that the mapping arrives
 correctly: the vendor's `symbol` column (with `map_symbols: true`) is the symbology carrier,
 it reaches the adapter through the DBN metadata's mappings section, and
-`gma.symbology` holds `XNAS.ITCH / 7370 / MSFT / [2022-06-10, 2022-06-11)` with the batch id
+`krn.symbology` holds `XNAS.ITCH / 7370 / MSFT / [2022-06-10, 2022-06-11)` with the batch id
 as `source_ref`. Note the half-open interval is **day-granular** because DBN's mapping
 intervals are.
 
@@ -777,9 +777,9 @@ the wire already supports (`SceneBuilder.ts:457`).
 **Consequence: infinite scroll-back is not expressible on the current wire.**
 Attach-with-N-bars is. → **Q10**.
 
-A chart is not "OHLC for AAPL": forum/aibox compiles to a scene whose slots bind gma
+A chart is not "OHLC for AAPL": forum/aibox compiles to a scene whose slots bind krn
 `requestId`s, so filling `candles-with-overlays-v1` means filling seven series, each a
-pipeline's output, **each computed by gma from L1 through the same operators the live stream
+pipeline's output, **each computed by krn from L1 through the same operators the live stream
 uses.** That is the entire reason the transpiler was rejected.
 
 The wire needs a **`query` request type** (`ClientSession` handles only `subscribe`/`cancel`)
@@ -802,7 +802,7 @@ interval trigger — a wall-clock flush would produce different batch boundaries
 than live for identical input, the same defect class as a wall-clock window one layer out.
 
 - **Research output** — the headless path: `ReplaySource` over L1 → DAG → `SinkNode` →
-  Arrow table. "gma as the query engine transforming tables." The primary use.
+  Arrow table. "krn as the query engine transforming tables." The primary use.
 - **`RecordingSink`** — fixed schema `(request_key, symbol, event_time_ns, bucket_start_ms,
   value)`, installed at the `Responder`'s send function, upstream of the lossy outbox (C5).
   `value` is **text, not a float column**: `ArgType` is a variant over
@@ -827,7 +827,7 @@ Raw durability is never a sink's job.
 | MBO sequence gap | `onSeq` returns false, marks stale, `requestSnapshotFn` re-snapshots (§9) |
 | out-of-order within a symbol | should not happen. Count, log, pass through in arrival order — reordering hides the defect and adds latency |
 | out-of-order across a splice | exact seq-based drop in `DRAINING`, not a reorder buffer |
-| gma restart | holds no durable state; re-runs from L1 |
+| krn restart | holds no durable state; re-runs from L1 |
 | ClickHouse unavailable | research and fill **fail loudly**. A live-only client profile keeps streaming and reports "no history", never a thin window |
 | local disk loss | L1 is rebuildable from the retained DBN files (§8.7). Without them, it is not |
 
@@ -860,16 +860,16 @@ target today. No number in this document is measured.**
 
 | id | measures | notes |
 |---|---|---|
-| **B1** | rows/sec ClickHouse → gma address space, **transport only, no compute**; native vs HTTP `ArrowStream` | sets the ceiling; settles §5.2 |
+| **B1** | rows/sec ClickHouse → krn address space, **transport only, no compute**; native vs HTTP `ArrowStream` | sets the ceiling; settles §5.2 |
 | **B2** | rows/sec **through the DAG**: today's JSON path vs `onRecord` vs inline drive vs interned symbols | the §6 budget, change by change |
 | **B3** | chart-fill p50/p99 at 1000 bars from `trades`, `1m`/`1h`/`1d`, cold and warm | post-measurement; informs Q8 |
 | **B4** | shard scaling: throughput vs cores | deferred with §7 |
 
-**The target is explicit: `B2 ≥ B1`.** If gma computes slower than ClickHouse delivers, gma
+**The target is explicit: `B2 ≥ B1`.** If krn computes slower than ClickHouse delivers, krn
 is the bottleneck and that is where the work goes. Under §1 we are not competing with SQL —
 we are using it as an indexed disk — so this is the well-defined form of "as fast as SQL".
 
-**Confound to design around, not discover: gma and ClickHouse share one machine.** They
+**Confound to design around, not discover: krn and ClickHouse share one machine.** They
 compete for cores and page cache, so `B2 ≥ B1` can be satisfied for the wrong reason. B1/B2
 therefore need pinned cores or a sequential protocol, and ClickHouse's
 `max_server_memory_usage` must be capped so it cannot take the page cache the scan depends
@@ -987,7 +987,7 @@ a future release is free to change and a decision is not:
 **One honest caveat about `ARROW_COMPUTE=OFF`.** The build still compiles an
 `arrow_compute_core` object group — cast and vector-hash kernels that dictionary arrays and
 IPC need internally. `ARROW_COMPUTE=OFF` excludes the full kernel suite, not that core, and
-there is no option that excludes it. D1 is therefore enforced by gma **never calling** an
+there is no option that excludes it. D1 is therefore enforced by krn **never calling** an
 Arrow kernel to produce a value, not by the kernels being absent from the archive. Worth
 knowing before someone reads "compute is off" as a structural guarantee: it is a
 scope-of-linkage fact, and the structural guarantee for D1 remains the SQL lint (§5.4).
@@ -1002,7 +1002,7 @@ deciding number is dependency weight, and it is bigger than "one more library":
 | OpenSSL, cpp-httplib | the historical/live **HTTP** API — ENC-1483's ingest job owns the download |
 | nlohmann_json | the JSON half of that API |
 | HowardHinnant/date | metadata date formatting |
-| zstd | `.dbn.zst`, which the ingest job decompresses before gma sees it |
+| zstd | `.dbn.zst`, which the ingest job decompresses before krn sees it |
 | **a Rust toolchain** | `databento-cpp` delegates DBN decoding to the Rust `dbn` crate's C-FFI (`src/detail/dbn_fsm.cpp` is a wrapper around `DbnDecoder_*`) |
 
 That last row is the one that settles it: a Rust toolchain inside a C++20/CMake project that
@@ -1141,7 +1141,7 @@ Nine tickets to a measured answer. Full detail and ticket ids:
 | T4 | Databento DBN adapter — trades + mbo → canonical batches | GMA_V3 | T3 |
 | T5 | ingest job — 7d/1symbol pull → L1, retain DBN, completeness rows | GMA_V3 | T2, T4 |
 | T6 | measure `book_events` sort-key uniqueness against real MBO | GMA_V3 | T5 |
-| T7 | **B1** — ClickHouse → gma transport benchmark, native vs HTTP | GMA_V3 | T5 |
+| T7 | **B1** — ClickHouse → krn transport benchmark, native vs HTTP | GMA_V3 | T5 |
 | T8 | `Dispatcher::onRecord` — non-JSON ingress | GMA_V3 | T3 |
 | T9 | **B2** — rows/sec through the DAG: JSON vs `onRecord` vs inline vs interned | GMA_V3 | T7, T8 |
 

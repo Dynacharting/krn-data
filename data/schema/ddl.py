@@ -257,7 +257,7 @@ def parse_create_table(stmt: str) -> dict:
 _CODEC_RE = re.compile(r"\bCODEC\s*\(", re.IGNORECASE)
 # DEFAULT / MATERIALIZED / ALIAS / EPHEMERAL all introduce a column expression.
 # Only DEFAULT is permitted by SPEC D2 (it computes nothing about the market —
-# see gma.ingest_windows.updated_at), but the parser recognises all four so that
+# see krn.ingest_windows.updated_at), but the parser recognises all four so that
 # a forbidden one is reported as an expression rather than silently absorbed
 # into the column's type string, where a type comparison would never see it.
 _EXPR_RE = re.compile(r"\b(DEFAULT|MATERIALIZED|ALIAS|EPHEMERAL)\b", re.IGNORECASE)
@@ -271,7 +271,7 @@ def _parse_column(item: str) -> list:
     exactly the kind of difference a type comparison cannot see: ClickHouse
     renders `updated_at DateTime64(3, 'UTC') DEFAULT now64(3)`, and without the
     default an omitted column silently stores epoch 0 (measured — it is the
-    zero-valued-clock defect gma.ingest_windows was rewritten to eliminate).
+    zero-valued-clock defect krn.ingest_windows was rewritten to eliminate).
 
     A list rather than a single tuple only because of `Nested`."""
     bits = item.split(None, 1)
