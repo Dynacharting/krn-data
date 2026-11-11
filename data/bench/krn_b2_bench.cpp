@@ -603,7 +603,7 @@ struct Args {
 
 int usage() {
   std::cerr <<
-      "usage: krn_b2_bench --dbn <trades.dbn> [--iterations N] [--warmup W] [--threads T]\n"
+      "usage: krn_b2_bench --dbn <trades.dbn|mbo.dbn> [--iterations N] [--warmup W] [--threads T]\n"
       "                    [--falsify=ulp|drop|swap|store]\n"
       "  exit 0: every iteration of every step byte-identical to step 1\n"
       "  exit 1: a mismatch (a finding)\n"
@@ -619,61 +619,51 @@ double percentile(std::vector<double> v, double p) {
   return v[lo] + (v[hi] - v[lo]) * (idx - static_cast<double>(lo));
 }
 
-}  // namespace
+// One data point: steps 1-2 over `rows`, compared byte-for-byte to step 1.
+template <typename Rec>
+int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
+            const data::SymbolTable& symbols) {
+  using Kind = RowKind<Rec>;
+  const std::span<const Rec> rows(all);
 
-int main(int argc, char** argv) {
-  Args a;
-  for (int i = 1; i < argc; ++i) {
-    const std::string s = argv[i];
-    auto val = [&](const char* flag) -> const char* {
-      const std::size_t n = std::strlen(flag);
-      if (s.rfind(flag, 0) == 0 && s.size() > n && s[n] == '=') return argv[i] + n + 1;
-      if (s == flag && i + 1 < argc) return argv[++i];
-      return nullptr;
-    };
-    if (const char* v = val("--dbn")) a.dbn = v;
-    else if (const char* v2 = val("--iterations")) a.iterations = std::atoi(v2);
-    else if (const char* v3 = val("--warmup")) a.warmup = std::atoi(v3);
-    else if (const char* v4 = val("--threads")) a.threads = static_cast<unsigned>(std::atoi(v4));
-    else if (const char* v5 = val("--falsify")) {
-      const std::string k = v5;
-      if (k == "ulp") a.falsify = Falsify::Ulp;
-      else if (k == "drop") a.falsify = Falsify::Drop;
-      else if (k == "swap") a.falsify = Falsify::Swap;
-      else if (k == "store") a.falsify = Falsify::Store;
-      else return usage();
-    } else return usage();
-  }
-  if (a.dbn.empty() || a.iterations < 1 || a.warmup < 0 || a.threads < 1) return usage();
+  // Split by what the engine sees, for the header and for the targets below.
+  std::size_t fieldless = 0;
+  for (const auto& r : rows) if (fieldsOf(r).empty()) ++fieldless;
 
-  // The engine bootstrap Host::run performs (src/host/Host.cpp step 3).
-  krn::registerBuiltinFunctions();
-  krn::registerBuiltinNodeTypes();
-
-  data::SymbolTable symbols;
-  Sample sample;
-  if (int rc = loadSample(a.dbn, symbols, sample); rc != kExitIdentical) return rc;
-  const std::span<const data::TickRecord> rows(sample.rows);
-
+  // Falsification targets. A target must be a row whose mutation CHANGES what
+  // the engine sees: on mbo a mutation row carries no field, so a ULP bump or a
+  // drop of one is a no-op and a swap of one with a print reorders nothing a
+  // terminal records. So each target is searched for from the middle onward.
+  const auto hasPrice = [&](std::size_t i) {
+    for (const auto& [n, v] : fieldsOf(rows[i])) if (n == engine::recordfields::kPrice) return true;
+    return false;
+  };
   FalsifyState fstate;
   fstate.kind = a.falsify;
   fstate.index = rows.size() / 2;
+  if (a.falsify == Falsify::Ulp || a.falsify == Falsify::Drop) {
+    while (fstate.index < rows.size() && !hasPrice(fstate.index)) ++fstate.index;
+    if (fstate.index >= rows.size()) { std::cerr << "no row carrying a price to falsify\n"; return kExitCouldNot; }
+  }
   if (a.falsify == Falsify::Swap) {
-    // A swap of two identical records is a no-op mutation; find a pair that differs.
+    // A swap of two rows the engine sees identically is a no-op mutation; find
+    // an adjacent pair that both carry fields and differ.
     while (fstate.index + 1 < rows.size() &&
-           rows[fstate.index].price == rows[fstate.index + 1].price &&
-           rows[fstate.index].size == rows[fstate.index + 1].size) ++fstate.index;
+           (fieldsOf(rows[fstate.index]).empty() ||
+            fieldsOf(rows[fstate.index]) == fieldsOf(rows[fstate.index + 1]) ||
+            fieldsOf(rows[fstate.index + 1]).empty())) ++fstate.index;
     if (fstate.index + 1 >= rows.size()) { std::cerr << "no distinct adjacent pair to swap\n"; return kExitCouldNot; }
     fstate.note = "records " + std::to_string(fstate.index) + " and " + std::to_string(fstate.index + 1) + " swapped";
   }
   if (a.falsify == Falsify::Drop) fstate.note = "record " + std::to_string(fstate.index) + " dropped";
 
-  std::printf("krn_b2_bench (ENC-1487) — B2 steps over the real sample\n");
+  std::printf("krn_b2_bench (ENC-1487, ENC-1628) — B2 steps over the real sample, %s data point\n",
+              Kind::kSchema);
   std::printf("  sample        : %s\n", a.dbn.c_str());
   std::printf("  sample bytes  : %llu, FNV-1a-32 %08llx\n",
               static_cast<unsigned long long>(sample.bytes), static_cast<unsigned long long>(sample.fnv1a32));
-  std::printf("  rows          : %zu TickRecords (ticker %s, from DBN symbology); %llu BookRecords not driven\n",
-              rows.size(), sample.ticker.c_str(), static_cast<unsigned long long>(sample.bookEvents));
+  std::printf("  rows          : %zu %s (ticker %s, from DBN symbology): %zu carry fields, %zu fieldless\n",
+              rows.size(), Kind::kName, sample.ticker.c_str(), rows.size() - fieldless, fieldless);
   std::printf("  graph         : %zu requests, non-windowed (D9):", requests().size());
   for (const auto& r : requests()) std::printf(" %s", r.name);
   std::printf("\n");
@@ -695,7 +685,7 @@ int main(int argc, char** argv) {
                 a.falsify == Falsify::Ulp ? "ulp" : a.falsify == Falsify::Drop ? "drop" :
                 a.falsify == Falsify::Swap ? "swap" : "store");
 
-  const auto& ss = steps();
+  const auto& ss = steps<Rec>();
   std::vector<std::vector<double>> seconds(ss.size());
   RunOutput reference;
   bool haveReference = false;
@@ -793,4 +783,42 @@ int main(int argc, char** argv) {
   }
   std::printf("IDENTICAL: every iteration of every step reproduced step 1 byte-for-byte\n");
   return kExitIdentical;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Args a;
+  for (int i = 1; i < argc; ++i) {
+    const std::string s = argv[i];
+    auto val = [&](const char* flag) -> const char* {
+      const std::size_t n = std::strlen(flag);
+      if (s.rfind(flag, 0) == 0 && s.size() > n && s[n] == '=') return argv[i] + n + 1;
+      if (s == flag && i + 1 < argc) return argv[++i];
+      return nullptr;
+    };
+    if (const char* v = val("--dbn")) a.dbn = v;
+    else if (const char* v2 = val("--iterations")) a.iterations = std::atoi(v2);
+    else if (const char* v3 = val("--warmup")) a.warmup = std::atoi(v3);
+    else if (const char* v4 = val("--threads")) a.threads = static_cast<unsigned>(std::atoi(v4));
+    else if (const char* v5 = val("--falsify")) {
+      const std::string k = v5;
+      if (k == "ulp") a.falsify = Falsify::Ulp;
+      else if (k == "drop") a.falsify = Falsify::Drop;
+      else if (k == "swap") a.falsify = Falsify::Swap;
+      else if (k == "store") a.falsify = Falsify::Store;
+      else return usage();
+    } else return usage();
+  }
+  if (a.dbn.empty() || a.iterations < 1 || a.warmup < 0 || a.threads < 1) return usage();
+
+  // The engine bootstrap Host::run performs (src/host/Host.cpp step 3).
+  krn::registerBuiltinFunctions();
+  krn::registerBuiltinNodeTypes();
+
+  data::SymbolTable symbols;
+  Sample sample;
+  if (int rc = loadSample(a.dbn, symbols, sample); rc != kExitIdentical) return rc;
+  return sample.trades.empty() ? measure(a, sample, sample.book, symbols)
+                               : measure(a, sample, sample.trades, symbols);
 }
