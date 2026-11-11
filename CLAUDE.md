@@ -30,8 +30,10 @@ The fetched engine needs RapidJSON and Boost; with no system package, pass
 
 B2: configure `-DCMAKE_BUILD_TYPE=Release -DKRN_DATA_BUILD_BENCHMARKS=ON`, then
 `data/bench/run_b2.sh build` prints the step table over the retained trades DBN
-(`KRN_B2_TRADES_DBN`) and asserts that each `--falsify` mutation turns the
-bit-identical check red. Exit 0 identical, 1 a mismatch, 2 could not run.
+(`KRN_B2_TRADES_DBN`) and, as a separate data point, the mbo DBN (`KRN_B2_MBO_DBN`;
+BookRecords through `BookRecordFieldSource`, ENC-1628), and asserts that each
+`--falsify` mutation turns the bit-identical check red on each. Exit 0 identical, 1 a
+mismatch, 2 could not run.
 
 B1: the same configure, a ClickHouse from `STACK_PORT_OFFSET=<n> tools/stack.sh up
 clickhouse` with `krn` ingested (`krn_ingest ingest`), then `STACK_PORT_OFFSET=<n>
