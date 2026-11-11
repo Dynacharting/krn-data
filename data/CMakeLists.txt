@@ -92,33 +92,18 @@ target_link_libraries(krn_ingest PRIVATE krn_data)
 krn_apply_warnings(krn_ingest)
 
 # ---------------------------------------------------------------------------
-# Tests — a SEPARATE binary from krn_tests, on purpose.
+# krn_b2_bench -- B2, rows/sec through the DAG per step (ENC-1487).
 # ---------------------------------------------------------------------------
-# Linking krn_data into `krn_tests` would put Arrow in the same executable as
-# every engine test, so a stray `#include <arrow/...>` in engine test code
-# would compile. Keeping the binaries apart means the engine test suite is
-# still built against an Arrow-free include path, which is the thing being
-# protected.
-if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
-  file(GLOB KRN_DATA_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
-  add_executable(krn_data_tests ${KRN_DATA_TEST_SOURCES})
-  # krn_plugin_reference for RecordIngressParityTest's computer (ENC-1557);
-  # never krn_connector_market (purity SPEC D9, D13).
-  target_link_libraries(krn_data_tests PRIVATE
-    krn_data krn_plugin_reference GTest::gtest_main)
-  # The DBN fixtures are REAL VENDOR BYTES (data/tests/fixtures/dbn/, see
-  # PROVENANCE.md there) and are read from the source tree rather than copied
-  # beside the binary: a copy step is one more thing that can silently copy
-  # nothing and leave a test skipping instead of failing. The path is absolute
-  # so it holds regardless of the test's working directory, and the fixture
-  # test FAILS (never skips) when a file is missing.
-  target_compile_definitions(krn_data_tests PRIVATE
-    KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
-    KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
-  krn_apply_warnings(krn_data_tests)
-  add_test(NAME krn_data_tests
-    COMMAND krn_data_tests
-    WORKING_DIRECTORY "$<TARGET_FILE_DIR:krn_data_tests>")
+# Behind KRN_DATA_BUILD_BENCHMARKS and NOT registered with ctest, for the same
+# reason as krn_ingest: its input is the retained sample DBN outside this repo,
+# and its exit code is the verdict (0 byte-identical across steps, 1 a
+# mismatch, 2 could not run). data/bench/run_b2.sh runs it and its
+# falsifications. Build it -DCMAKE_BUILD_TYPE=Release; no FP-changing flags.
+if (KRN_DATA_BUILD_BENCHMARKS)
+  add_executable(krn_b2_bench "${CMAKE_CURRENT_SOURCE_DIR}/bench/krn_b2_bench.cpp")
+  target_link_libraries(krn_b2_bench PRIVATE krn_data)
+  krn_apply_warnings(krn_b2_bench)
+  message(STATUS "krn-data: KRN_DATA_BUILD_BENCHMARKS=ON, krn_b2_bench enabled")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -182,4 +167,34 @@ if (KRN_DATA_BUILD_BENCHMARKS)
   krn_apply_warnings(krn_b1_transport)
   message(STATUS "krn-data: KRN_DATA_BUILD_BENCHMARKS=ON, krn_b1_transport enabled "
                  "(clickhouse-cpp v2.6.2 @ 001025cd)")
+endif()
+
+# ---------------------------------------------------------------------------
+# Tests — a SEPARATE binary from krn_tests, on purpose.
+# ---------------------------------------------------------------------------
+# Linking krn_data into `krn_tests` would put Arrow in the same executable as
+# every engine test, so a stray `#include <arrow/...>` in engine test code
+# would compile. Keeping the binaries apart means the engine test suite is
+# still built against an Arrow-free include path, which is the thing being
+# protected.
+if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
+  file(GLOB KRN_DATA_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
+  add_executable(krn_data_tests ${KRN_DATA_TEST_SOURCES})
+  # krn_plugin_reference for RecordIngressParityTest's computer (ENC-1557);
+  # never krn_connector_market (purity SPEC D9, D13).
+  target_link_libraries(krn_data_tests PRIVATE
+    krn_data krn_plugin_reference GTest::gtest_main)
+  # The DBN fixtures are REAL VENDOR BYTES (data/tests/fixtures/dbn/, see
+  # PROVENANCE.md there) and are read from the source tree rather than copied
+  # beside the binary: a copy step is one more thing that can silently copy
+  # nothing and leave a test skipping instead of failing. The path is absolute
+  # so it holds regardless of the test's working directory, and the fixture
+  # test FAILS (never skips) when a file is missing.
+  target_compile_definitions(krn_data_tests PRIVATE
+    KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
+    KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
+  krn_apply_warnings(krn_data_tests)
+  add_test(NAME krn_data_tests
+    COMMAND krn_data_tests
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:krn_data_tests>")
 endif()

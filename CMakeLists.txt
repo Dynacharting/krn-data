@@ -17,8 +17,13 @@ endif()
 # Never KRN_BUILD_*, which the engine reads, and never KRN_DATA_ARROW_*,
 # KRN_DATA_DBN_* or KRN_DATA_TEST_*, which the engine's data/ already uses.
 option(KRN_DATA_BUILD_TESTS "Build krn_data_tests and register it with ctest" ON)
+# ENC-1487. The B2 harness (data/bench/). OFF by default and never a ctest case:
+# it needs the retained sample DBN, which is not in this repo, and a benchmark
+# that skips when its input is absent looks exactly like one that passed.
+# ENC-1485 adds krn_b1_transport (B1) under the same option; it fetches
+# clickhouse-cpp and needs a live ClickHouse to run.
 option(KRN_DATA_BUILD_BENCHMARKS
-  "Build krn_b1_transport (fetches clickhouse-cpp; needs a live ClickHouse to run)" OFF)
+  "Build krn_b2_bench (B2) and krn_b1_transport (B1, fetches clickhouse-cpp)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
