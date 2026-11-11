@@ -92,6 +92,21 @@ target_link_libraries(krn_ingest PRIVATE krn_data)
 krn_apply_warnings(krn_ingest)
 
 # ---------------------------------------------------------------------------
+# krn_b2_bench -- B2, rows/sec through the DAG per step (ENC-1487).
+# ---------------------------------------------------------------------------
+# Behind KRN_DATA_BUILD_BENCHMARKS and NOT registered with ctest, for the same
+# reason as krn_ingest: its input is the retained sample DBN outside this repo,
+# and its exit code is the verdict (0 byte-identical across steps, 1 a
+# mismatch, 2 could not run). data/bench/run_b2.sh runs it and its
+# falsifications. Build it -DCMAKE_BUILD_TYPE=Release; no FP-changing flags.
+if (KRN_DATA_BUILD_BENCHMARKS)
+  add_executable(krn_b2_bench "${CMAKE_CURRENT_SOURCE_DIR}/bench/krn_b2_bench.cpp")
+  target_link_libraries(krn_b2_bench PRIVATE krn_data)
+  krn_apply_warnings(krn_b2_bench)
+  message(STATUS "krn-data: KRN_DATA_BUILD_BENCHMARKS=ON, krn_b2_bench enabled")
+endif()
+
+# ---------------------------------------------------------------------------
 # Tests — a SEPARATE binary from krn_tests, on purpose.
 # ---------------------------------------------------------------------------
 # Linking krn_data into `krn_tests` would put Arrow in the same executable as
