@@ -94,6 +94,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // ===========================================================================
@@ -629,6 +630,44 @@ void printTable(const std::vector<Cell>& cells) {
   }
 }
 
+// The sweep collapses when the server delivers the same blocks at every
+// requested size (see the header). Then the cells of one (table, cache,
+// transport) are the same measurement repeated, and pooling them is the
+// honest summary; when the delivered block counts differ, pooling would mix
+// different work and is refused for that group.
+void printPooled(const std::vector<Cell>& cells) {
+  std::map<std::tuple<std::string, std::string, std::string>, std::vector<const Cell*>> g;
+  for (const auto& c : cells) g[{c.table, c.cache, c.transport}].push_back(&c);
+  std::cout << "\npooled over block sizes (only where every size delivered the same blocks):\n"
+               "| table | cache | transport | runs | blocks/query | rows/s median | rows/s p10–p90"
+               " | µs/query median | wire MB/s median | allocs/block |\n"
+               "|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n";
+  for (const auto& [k, v] : g) {
+    const auto b = v.front()->samples.front().blocks;
+    bool same = true;
+    for (const Cell* c : v) for (const auto& s : c->samples) same = same && s.blocks == b;
+    if (!same) {
+      std::cout << "| " << std::get<0>(k) << " | " << std::get<1>(k) << " | " << std::get<2>(k)
+                << " | — | differs by block size: not pooled | | | | | |\n";
+      continue;
+    }
+    std::vector<double> rps, us, mbps, allocs;
+    for (const Cell* c : v)
+      for (const auto& s : c->samples) {
+        const double sec = static_cast<double>(s.ns) / 1e9;
+        rps.push_back(static_cast<double>(s.rows) / sec);
+        us.push_back(static_cast<double>(s.ns) / 1e3);
+        mbps.push_back(static_cast<double>(s.recvBytes) / sec / 1e6);
+        allocs.push_back(static_cast<double>(s.allocs) / static_cast<double>(s.blocks));
+      }
+    std::cout << "| " << std::get<0>(k) << " | " << std::get<1>(k) << " | " << std::get<2>(k)
+              << " | " << rps.size() << " | " << b << " | " << fmtRate(pct(rps, 0.5)) << "| "
+              << fmtRate(pct(rps, 0.1)) << "– " << fmtRate(pct(rps, 0.9)) << "| " << std::fixed
+              << std::setprecision(0) << pct(us, 0.5) << " | " << std::setprecision(1)
+              << pct(mbps, 0.5) << " | " << std::setprecision(0) << pct(allocs, 0.5) << " |\n";
+  }
+}
+
 std::string cpuList() {
   cpu_set_t set;
   CPU_ZERO(&set);
@@ -742,6 +781,7 @@ int run(int argc, char** argv) {
         }
 
   printTable(cells);
+  printPooled(cells);
   std::cout << "\ncold runs whose eviction was read back as 0 resident pages: "
             << coldChecked << "\n";
   return kRan;
