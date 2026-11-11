@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -1139,4 +1140,34 @@ TEST(CodecRefusalTest, ANullInANonNullableColumnIsRefused) {
   std::vector<TickRecord> out;
   const auto st = decodeTicks(*bad, RecordKind::Trade, symbols, venues, out);
   EXPECT_FALSE(st.ok()) << "a null price decoded into a TickRecord";
+}
+
+// `kL1Database` is the name C++ uses for the L1 database (the benchmarks, the
+// store's Config default); `data/schema/clickhouse.sql` is what creates it. Two
+// spellings of one name drift silently — the symptom is a query against a
+// database nothing created — so pin them: the DDL creates exactly
+// `kL1Database`, and every table it creates is qualified with it (ENC-1485).
+TEST(L1DatabaseTest, EveryDdlStatementNamesIt) {
+  const std::string path =
+      std::string(KRN_TEST_SOURCE_DIR) + "/data/schema/clickhouse.sql";
+  std::ifstream in(path);
+  ASSERT_TRUE(in) << "cannot read " << path;
+  const std::string db(kL1Database);
+  int createDb = 0, tables = 0;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.rfind("--", 0) == 0) continue;  // commented-out DDL (quotes, projections)
+    if (line.rfind("CREATE DATABASE", 0) == 0) {
+      EXPECT_EQ(line, "CREATE DATABASE IF NOT EXISTS " + db + ";");
+      ++createDb;
+    }
+    constexpr std::string_view kTable = "CREATE TABLE IF NOT EXISTS ";
+    if (line.rfind(kTable, 0) == 0) {
+      EXPECT_EQ(line.substr(kTable.size(), db.size() + 1), db + ".") << line;
+      ++tables;
+    }
+  }
+  EXPECT_EQ(createDb, 1);
+  // trades, book_events, book_snapshots, symbology, ingest_windows, gaps.
+  EXPECT_EQ(tables, 6) << "anti-vacuity: the DDL's live CREATE TABLE count moved";
 }

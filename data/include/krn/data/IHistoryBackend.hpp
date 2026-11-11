@@ -193,7 +193,7 @@ public:
 
   struct Config {
     std::string  endpoint;
-    std::string  database = "krn";
+    std::string  database{kL1Database};
     std::string  user;
     std::string  password;             // from env; never from an INI file
     Transport    transport = Transport::Native;   // pending B1
