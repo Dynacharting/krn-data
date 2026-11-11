@@ -27,6 +27,13 @@
 // uncompressed native stream with ClickHouse's lz4_frame Arrow default would
 // measure the codec, not the transport.
 //
+// THE SWEEP IS `max_block_size`, AND THE SERVER DECIDES WHAT IT MEANS. The
+// table reports the blocks each query ACTUALLY delivered, because ClickHouse
+// 25.3 does not split a MergeTree granule below `max_block_size`: measured on
+// the T5 sample, whose parts are one 1000-row granule each, every value from
+// 64 to 65536 yields exactly one 1000-row block on both transports. A sweep
+// column that only echoed the requested size would hide that.
+//
 // Per run it records wall time, rows, non-empty blocks, bytes received on
 // sockets (recv/recvmsg are interposed below), and heap allocations (malloc
 // family interposed below, so Arrow's pool and clickhouse-cpp's columns are
@@ -87,6 +94,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // ===========================================================================
@@ -178,7 +186,7 @@ struct Args {
   int httpPort = 0;
   std::string database{krn::data::kL1Database};
   std::vector<std::string> tables{"book_events", "trades"};
-  std::vector<std::size_t> blocks{16, 32, 64, 128, 256, 512, 1024};
+  std::vector<std::size_t> blocks{64, 256, 1024, 8192, 65536};
   std::vector<std::string> transports{"native", "http"};
   std::vector<std::string> caches{"cold", "warm"};
   int warmIters = 200;
@@ -214,7 +222,7 @@ void usage() {
       "  --http-port <p>        default 8123 + STACK_PORT_OFFSET\n"
       "  --database <d>         default krn::data::kL1Database (\"krn\")\n"
       "  --tables <a,b>         default book_events,trades\n"
-      "  --blocks <n,...>       max_block_size sweep (default 16,...,1024)\n"
+      "  --blocks <n,...>       max_block_size sweep (default 64,256,1024,8192,65536)\n"
       "  --transports <..>      native,http\n"
       "  --caches <..>          cold,warm\n"
       "  --warm-iters <n>       timed warm runs per cell (default 200)\n"
@@ -622,6 +630,44 @@ void printTable(const std::vector<Cell>& cells) {
   }
 }
 
+// The sweep collapses when the server delivers the same blocks at every
+// requested size (see the header). Then the cells of one (table, cache,
+// transport) are the same measurement repeated, and pooling them is the
+// honest summary; when the delivered block counts differ, pooling would mix
+// different work and is refused for that group.
+void printPooled(const std::vector<Cell>& cells) {
+  std::map<std::tuple<std::string, std::string, std::string>, std::vector<const Cell*>> g;
+  for (const auto& c : cells) g[{c.table, c.cache, c.transport}].push_back(&c);
+  std::cout << "\npooled over block sizes (only where every size delivered the same blocks):\n"
+               "| table | cache | transport | runs | blocks/query | rows/s median | rows/s p10–p90"
+               " | µs/query median | wire MB/s median | allocs/block |\n"
+               "|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n";
+  for (const auto& [k, v] : g) {
+    const auto b = v.front()->samples.front().blocks;
+    bool same = true;
+    for (const Cell* c : v) for (const auto& s : c->samples) same = same && s.blocks == b;
+    if (!same) {
+      std::cout << "| " << std::get<0>(k) << " | " << std::get<1>(k) << " | " << std::get<2>(k)
+                << " | — | differs by block size: not pooled | | | | | |\n";
+      continue;
+    }
+    std::vector<double> rps, us, mbps, allocs;
+    for (const Cell* c : v)
+      for (const auto& s : c->samples) {
+        const double sec = static_cast<double>(s.ns) / 1e9;
+        rps.push_back(static_cast<double>(s.rows) / sec);
+        us.push_back(static_cast<double>(s.ns) / 1e3);
+        mbps.push_back(static_cast<double>(s.recvBytes) / sec / 1e6);
+        allocs.push_back(static_cast<double>(s.allocs) / static_cast<double>(s.blocks));
+      }
+    std::cout << "| " << std::get<0>(k) << " | " << std::get<1>(k) << " | " << std::get<2>(k)
+              << " | " << rps.size() << " | " << b << " | " << fmtRate(pct(rps, 0.5)) << "| "
+              << fmtRate(pct(rps, 0.1)) << "– " << fmtRate(pct(rps, 0.9)) << "| " << std::fixed
+              << std::setprecision(0) << pct(us, 0.5) << " | " << std::setprecision(1)
+              << pct(mbps, 0.5) << " | " << std::setprecision(0) << pct(allocs, 0.5) << " |\n";
+  }
+}
+
 std::string cpuList() {
   cpu_set_t set;
   CPU_ZERO(&set);
@@ -735,6 +781,7 @@ int run(int argc, char** argv) {
         }
 
   printTable(cells);
+  printPooled(cells);
   std::cout << "\ncold runs whose eviction was read back as 0 resident pages: "
             << coldChecked << "\n";
   return kRan;
