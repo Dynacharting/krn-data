@@ -26,6 +26,12 @@ The fetched engine needs RapidJSON and Boost; with no system package, pass
 | option | default | effect |
 |---|---|---|
 | `KRN_DATA_BUILD_TESTS` | `ON` | fetch googletest; register `krn_data_tests`, `krn_schema_no_compute` and its selftest with ctest |
+| `KRN_DATA_BUILD_BENCHMARKS` | `OFF` | build `krn_b2_bench` (ENC-1487, B2 rows/sec per step); never a ctest case |
+
+B2: configure `-DCMAKE_BUILD_TYPE=Release -DKRN_DATA_BUILD_BENCHMARKS=ON`, then
+`data/bench/run_b2.sh build` prints the step table over the retained trades DBN
+(`KRN_B2_TRADES_DBN`) and asserts that each `--falsify` mutation turns the
+bit-identical check red. Exit 0 identical, 1 a mismatch, 2 could not run.
 
 This repo's names are `KRN_DATA_BUILD_*` (options) and `KRN_DATA_KRN_*` (the pin). Never
 add a `KRN_BUILD_*` option here, and never reuse the engine data layer's
