@@ -1,12 +1,13 @@
-// krn_b2_bench — B2, rows/sec through the DAG, one data point per step (ENC-1487).
+// krn_b2_bench — B2, rows/sec through the DAG, one data point per step (ENC-1487;
+// the mbo data point, ENC-1628).
 //
 // Design: krn specs/2026-10-14-krn-data-layer/SPEC.md D3, D9, D13;
 //         docs/data-layer.md §6, §14.
 //
 // WHAT IT MEASURES
 // ----------------
-// The real sample's TickRecords, decoded from the retained DBN file through
-// krn-data's own DatabentoAdapter (no ClickHouse, no CSV), driven through the
+// The real sample's rows, decoded from one retained DBN file through krn-data's
+// own DatabentoAdapter (no ClickHouse, no CSV), driven through the
 // engine's Dispatcher into a NON-WINDOWED graph built by the engine's own
 // TreeBuilder (D9: nothing here waits on a clock, so nothing needs event time).
 // Each STEP is one way of getting a record into the Dispatcher. Steps 1 and 2
@@ -17,6 +18,20 @@
 //                    `Dispatcher::onTick`. DOM construction is INSIDE the timed
 //                    region, because that is the cost the step exists to show.
 //   2. onrecord      `Dispatcher::onRecord` over a `RecordFieldSource`; no DOM.
+//
+// ONE DATA POINT PER FILE, chosen by what the file decodes to (ENC-1628):
+//
+//   trades.dbn -> TickRecords, through RecordFieldSource.
+//   mbo.dbn    -> BookRecords, through BookRecordFieldSource. EVERY decoded row
+//                 is offered on both steps: a print carries price and size, a
+//                 book mutation carries no field (its equivalent DOM is `{}`),
+//                 per the mapping in BookRecordFieldSource.hpp. The run prints
+//                 the split, because fieldless rows are cheaper per row and the
+//                 rows/sec of a mixed stream is not a per-print figure.
+//
+// A file that decodes to both, or to neither, is refused (exit 2). The two data
+// points are separate runs with separate references and are never summed:
+// docs/data-layer.md §C13, the same execution is in both files.
 //
 // Steps 3-5 (inline DAG drive, interned symbols, store-write elision) are
 // engine changes in krn and are NOT implemented here. Each plugs in as one more
@@ -42,8 +57,8 @@
 //
 // WHAT IT DOES NOT CLAIM
 // ----------------------
-// No B2 >= B1 verdict. The sample is 1000 trades rows; fixed costs dominate at
-// that size (SPEC §5, the T5 notes). Iterations replay the same real rows over
+// No B2 >= B1 verdict. The sample is 1000 trades rows and 1000 mbo messages;
+// fixed costs dominate at that size (SPEC §5, the T5 notes). Iterations replay the same real rows over
 // a FRESH engine each time — never duplicated or synthesized rows — and the
 // cache is warm by construction: the rows are decoded into memory once, before
 // any timing, and no I/O is in the timed region.
@@ -55,6 +70,8 @@
 #include "krn/NodeRegistry.hpp"
 #include "krn/StreamValue.hpp"
 #include "krn/TreeBuilder.hpp"
+#include "krn/data/BookRecord.hpp"
+#include "krn/data/BookRecordFieldSource.hpp"
 #include "krn/data/DatabentoAdapter.hpp"
 #include "krn/data/RecordFieldSource.hpp"
 #include "krn/data/TickRecord.hpp"
@@ -355,6 +372,34 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// The two record types a data point can be made of. `Source` is the engine
+// field view of one row; everything below is written once over `Rec`.
+// ---------------------------------------------------------------------------
+template <typename Rec> struct RowKind;
+template <> struct RowKind<data::TickRecord> {
+  using Source = engine::RecordFieldSource;
+  static constexpr const char* kName   = "TickRecords";
+  static constexpr const char* kSchema = "trades";
+};
+template <> struct RowKind<data::BookRecord> {
+  using Source = engine::BookRecordFieldSource;
+  static constexpr const char* kName   = "BookRecords";
+  static constexpr const char* kSchema = "mbo";
+};
+
+// One row's fields, in emission order: what "distinct" and "carries a price"
+// mean for the falsification targets, for either record type.
+template <typename Rec>
+std::vector<std::pair<std::string, double>> fieldsOf(const Rec& r) {
+  struct Collect final : engine::NumericFieldSink {
+    std::vector<std::pair<std::string, double>> out;
+    void field(const std::string& n, double v) override { out.emplace_back(n, v); }
+  } c;
+  typename RowKind<Rec>::Source(r).forEachNumber(c);
+  return std::move(c.out);
+}
+
+// ---------------------------------------------------------------------------
 // Steps. THE PLUG POINT for steps 3-5: add an entry. `configure` sets whatever
 // engine knob the step introduces on the Dispatcher's Config; `ingest` drives
 // one record; `contract` says what it must reproduce. A step whose engine
@@ -371,6 +416,7 @@ struct OutputContract {
   bool store = true;
 };
 
+template <typename Rec>
 struct StepSpec {
   int         number;
   const char* id;
@@ -378,16 +424,17 @@ struct StepSpec {
   std::function<void(util::Config&)> configure;
   // Drives the whole sample through `rig`, in order. Takes the full span so a
   // step that batches (none yet) can.
-  std::function<void(Rig&, std::span<const data::TickRecord>, const std::string& ticker,
+  std::function<void(Rig&, std::span<const Rec>, const std::string& ticker,
                      FalsifyState*)> drive;
   OutputContract contract;
 };
 
 // Today's JSON path: the DOM a JSON feed would have produced for this record,
-// built per record. Its members are exactly RecordFieldSource's fields in its
-// order — the "equivalent tick" that RecordFieldSource.hpp defines and
-// RecordIngressParityTest pins.
-Event synthesizeEvent(const std::string& ticker, const data::TickRecord& rec) {
+// built per record. Its members are exactly the record's FieldSource fields in
+// its order — the "equivalent tick" that RecordFieldSource.hpp and
+// BookRecordFieldSource.hpp define and RecordIngressParityTest pins.
+template <typename Rec>
+Event synthesizeEvent(const std::string& ticker, const Rec& rec) {
   auto doc = std::make_shared<rapidjson::Document>();
   doc->SetObject();
   struct Add final : engine::NumericFieldSink {
@@ -399,24 +446,26 @@ Event synthesizeEvent(const std::string& ticker, const data::TickRecord& rec) {
     }
   } add;
   add.doc = doc.get();
-  engine::RecordFieldSource(rec).forEachNumber(add);
+  typename RowKind<Rec>::Source(rec).forEachNumber(add);
   return Event{ticker, std::move(doc)};
 }
 
-const std::vector<StepSpec>& steps() {
-  static const std::vector<StepSpec> s = {
+template <typename Rec>
+const std::vector<StepSpec<Rec>>& steps() {
+  using Source = typename RowKind<Rec>::Source;
+  static const std::vector<StepSpec<Rec>> s = {
       {1, "json-ontick", "onTick + synthesized DOM (today's JSON path)",
        [](util::Config&) {},
-       [](Rig& rig, std::span<const data::TickRecord> rows, const std::string& ticker, FalsifyState*) {
+       [](Rig& rig, std::span<const Rec> rows, const std::string& ticker, FalsifyState*) {
          for (const auto& r : rows) rig.disp.onTick(synthesizeEvent(ticker, r));
        },
        {}},
       {2, "onrecord", "onRecord, no DOM",
        [](util::Config&) {},
-       [](Rig& rig, std::span<const data::TickRecord> rows, const std::string&, FalsifyState* f) {
+       [](Rig& rig, std::span<const Rec> rows, const std::string&, FalsifyState* f) {
          if (!f || f->kind == Falsify::None || f->kind == Falsify::Store) {
            for (const auto& r : rows) {
-             const engine::RecordFieldSource fields(r);
+             const Source fields(r);
              rig.disp.onRecord(r.header.symbolId, fields);
            }
            return;
@@ -426,7 +475,7 @@ const std::vector<StepSpec>& steps() {
            if (f->kind == Falsify::Drop && i == f->index) { ++f->applied; continue; }
            if (f->kind == Falsify::Swap && i == f->index)     { j = i + 1; ++f->applied; }
            if (f->kind == Falsify::Swap && i == f->index + 1) { j = i - 1; }
-           const engine::RecordFieldSource fields(rows[j]);
+           const Source fields(rows[j]);
            if (f->kind == Falsify::Ulp && i == f->index) {
              const UlpPrice bumped(fields, *f);
              rig.disp.onRecord(rows[j].header.symbolId, bumped);
