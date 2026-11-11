@@ -65,7 +65,7 @@ namespace krn::data::csv {
 // none of them is recoverable from the CSV rows:
 //
 //   * `start`/`end` are the REQUESTED window, which is what
-//     `gma.ingest_windows` has an opinion about. The first row's `ts_event` is
+//     `krn.ingest_windows` has an opinion about. The first row's `ts_event` is
 //     not the window start — a quiet opening minute is data, not a short pull.
 //   * `limit` is how TRUNCATION is detectable at all. This sample carries
 //     `limit: 1000` and delivered exactly 1000 records, so the delivered
@@ -211,7 +211,7 @@ arrow::Result<std::vector<std::byte>> readFile(const std::string& path);
 // yyyymmdd (UTC) for a nanosecond timestamp — the form DBN's symbology
 // intervals use.
 std::uint32_t yyyymmddUtc(std::uint64_t tsNs);
-// Midnight UTC of a yyyymmdd, in ns. The inverse, for `gma.symbology`'s
+// Midnight UTC of a yyyymmdd, in ns. The inverse, for `krn.symbology`'s
 // half-open `valid_from`/`valid_to`.
 std::uint64_t midnightUtcNs(std::uint32_t yyyymmdd);
 

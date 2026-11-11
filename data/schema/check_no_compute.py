@@ -3,11 +3,11 @@
 `data/schema/clickhouse.sql`.
 
 SPEC `specs/2026-10-14-krn-data-layer/SPEC.md` D1/D2: ClickHouse does selection,
-gma does computation, and nothing computes a value twice. D2 is usually read as a
+krn does computation, and nothing computes a value twice. D2 is usually read as a
 rule about the shim's SELECTs (`krn_shim_sql_lint`, docs §5.4 — a different
 check, not this one), but it binds the schema just as hard: a `MATERIALIZED`
 column, an `AggregatingMergeTree` or a bar-producing `MATERIALIZED VIEW` is a
-second implementation of gma's math that no SELECT lint would ever see, because
+second implementation of krn's math that no SELECT lint would ever see, because
 by the time a query runs the value has already been computed.
 
 So this asserts a property of the FILE:
@@ -35,7 +35,7 @@ TWO THINGS MAKE IT A GATE RATHER THAN A GESTURE.
    anti-vacuity for the SQL lint; this repo has shipped the failure more than
    once). So the check also asserts a non-zero statement count, that the
    stripper actually removed something, and — for the real schema — that the six
-   expected tables are present, that `gma.quotes` is NOT created, that no
+   expected tables are present, that `krn.quotes` is NOT created, that no
    projection is live and that `book_events` carries the plain sort key. Those
    last four are this ticket's decisions, not D2, and they are reported
    separately.
@@ -63,8 +63,8 @@ FIXTURES = os.path.join(HERE, "fixtures")
 DEFAULT_URL = os.environ.get("CH_HTTP_URL", "http://127.0.0.1:8123/")
 
 EXPECTED_TABLES = [
-    "gma.trades", "gma.book_events", "gma.book_snapshots",
-    "gma.symbology", "gma.ingest_windows", "gma.gaps",
+    "krn.trades", "krn.book_events", "krn.book_snapshots",
+    "krn.symbology", "krn.ingest_windows", "krn.gaps",
 ]
 
 # Aggregate-function combinators. `sumIf`, `quantilesState`, `anyLastOrNull` are
@@ -194,9 +194,9 @@ def scan(path, schema_decisions=True, aggregates_path=None):
         for want in EXPECTED_TABLES:
             if want not in tables:
                 findings.append("ENC-1480: %s is not created by this file" % want)
-        if "gma.quotes" in tables:
+        if "krn.quotes" in tables:
             findings.append(
-                "ENC-1480: gma.quotes is created. Nothing populates it without "
+                "ENC-1480: krn.quotes is created. Nothing populates it without "
                 "mbp-1 (SPEC Non-goals) and an empty table reads as 'the market "
                 "had no quotes' — the §8.8 failure. It stays commented.")
         if re.search(r"\bADD\s+PROJECTION\b", stripped, re.I):
@@ -210,8 +210,8 @@ def scan(path, schema_decisions=True, aggregates_path=None):
         # message yields a book mutation AND a print), so a background merge
         # could silently delete a real row in a way indistinguishable from a
         # provider gap.
-        for name in ("gma.trades", "gma.book_events", "gma.book_snapshots",
-                     "gma.gaps"):
+        for name in ("krn.trades", "krn.book_events", "krn.book_snapshots",
+                     "krn.gaps"):
             t = tables.get(name)
             if t is not None and t["clauses"].get("ENGINE") != "MergeTree":
                 findings.append(
@@ -219,26 +219,26 @@ def scan(path, schema_decisions=True, aggregates_path=None):
                     "MergeTree on the event tables." % (name,
                                                         t["clauses"].get("ENGINE")))
 
-        # gma.symbology is the ONE exception, and its version column must stay a
+        # krn.symbology is the ONE exception, and its version column must stay a
         # WRITE clock. ingest_windows was the second exception and is not any
         # more: ReplacingMergeTree(completed_at) resolves a re-ingest to the
         # stale complete row and deletes the in-flight one at merge time, which
         # makes an incomplete window read as complete — measured under
         # ENC-1480, see the table's comment. Re-adding it reintroduces exactly
         # the D11 failure.
-        sym = tables.get("gma.symbology")
+        sym = tables.get("krn.symbology")
         if sym is not None and \
                 sym["clauses"].get("ENGINE") != "ReplacingMergeTree(ingested_at)":
             findings.append(
-                "ENC-1480: gma.symbology ENGINE is %s, expected "
+                "ENC-1480: krn.symbology ENGINE is %s, expected "
                 "ReplacingMergeTree(ingested_at) — the version column has to be "
                 "a write clock or closing a half-open interval resolves "
                 "arbitrarily (SPEC D7)." % sym["clauses"].get("ENGINE"))
-        iw = tables.get("gma.ingest_windows")
+        iw = tables.get("krn.ingest_windows")
         if iw is not None:
             if iw["clauses"].get("ENGINE") != "MergeTree":
                 findings.append(
-                    "ENC-1480: gma.ingest_windows ENGINE is %s. It is a plain "
+                    "ENC-1480: krn.ingest_windows ENGINE is %s. It is a plain "
                     "MergeTree append-only transition log: a Replacing engine "
                     "resolves a re-ingest to the stale state=1 row and then "
                     "deletes the in-flight one, so an incomplete window reads "
@@ -255,7 +255,7 @@ def scan(path, schema_decisions=True, aggregates_path=None):
             got_iw = iw["clauses"].get("ORDER BY")
             if got_iw != want_iw:
                 findings.append(
-                    "ENC-1480: gma.ingest_windows ORDER BY is %s, expected %s. "
+                    "ENC-1480: krn.ingest_windows ORDER BY is %s, expected %s. "
                     "to_ts must be in the key (a recorded [00:00,12:00) must "
                     "not answer 'complete' for [00:00,24:00) — D11), and "
                     "session_id must not sit between the window prefix and "
@@ -270,18 +270,18 @@ def scan(path, schema_decisions=True, aggregates_path=None):
             iw_cols = {c[0]: c for c in iw["columns"]}
             ua = iw_cols.get("updated_at")
             if ua is None:
-                findings.append("ENC-1480: gma.ingest_windows has no "
+                findings.append("ENC-1480: krn.ingest_windows has no "
                                 "updated_at column to order its log by.")
             elif "DEFAULT now64(3)" not in ua[2]:
                 findings.append(
-                    "ENC-1480: gma.ingest_windows.updated_at has no "
+                    "ENC-1480: krn.ingest_windows.updated_at has no "
                     "`DEFAULT now64(3)` (expression is %r). Without it an "
                     "INSERT that omits the column stores epoch 0 — measured — "
                     "every row ties and 'the newest row' is arbitrary, so a "
                     "stale state=1 can win (SPEC D11)." % (ua[2] or "none"))
             if "state" in iw_cols and "3 invalidated" not in raw:
                 findings.append(
-                    "ENC-1480: gma.ingest_windows.state no longer documents "
+                    "ENC-1480: krn.ingest_windows.state no longer documents "
                     "state 3 (invalidated). A DROP PARTITION for one symbol "
                     "wipes every symbol's rows for that day, and 'collaterally "
                     "wiped' is neither in-flight nor failed.")
@@ -290,30 +290,30 @@ def scan(path, schema_decisions=True, aggregates_path=None):
         # DROP PARTITION reload can reach it. On ts_detected it cannot: a
         # corrected re-pull leaves a row still asserting a discontinuity in data
         # that is now complete — a phantom hole.
-        gp = tables.get("gma.gaps")
+        gp = tables.get("krn.gaps")
         if gp is not None:
             if gp["clauses"].get("PARTITION BY") != "toYYYYMMDD(ts_from)":
                 findings.append(
-                    "ENC-1480: gma.gaps PARTITION BY is %s, expected "
+                    "ENC-1480: krn.gaps PARTITION BY is %s, expected "
                     "toYYYYMMDD(ts_from). On the detection day the re-ingest "
                     "DROP PARTITION cannot remove these rows, so a filled hole "
                     "leaves a phantom one behind."
                     % gp["clauses"].get("PARTITION BY"))
             if gp["clauses"].get("ORDER BY") != "(symbol,ts_from,seq_from)":
                 findings.append(
-                    "ENC-1480: gma.gaps ORDER BY is %s, expected "
+                    "ENC-1480: krn.gaps ORDER BY is %s, expected "
                     "(symbol,ts_from,seq_from) — it must lead with the same "
                     "event time the partition key is built on."
                     % gp["clauses"].get("ORDER BY"))
         replacing = sorted(n for n, t in tables.items()
                            if "Replacing" in (t["clauses"].get("ENGINE") or ""))
-        if replacing != ["gma.symbology"]:
+        if replacing != ["krn.symbology"]:
             findings.append(
                 "ENC-1480: the Replacing-engine tables are %s; exactly one "
-                "(gma.symbology) is permitted — SPEC D5 is plain MergeTree and "
+                "(krn.symbology) is permitted — SPEC D5 is plain MergeTree and "
                 "each exception has to earn itself in the file." % replacing)
 
-        be = tables.get("gma.book_events")
+        be = tables.get("krn.book_events")
         if be is not None:
             got = be["clauses"].get("ORDER BY", "")
             want = "(symbol,ts_event,provider_seq)"
@@ -384,15 +384,15 @@ MUTANTS = [
       "ENGINE = ReplacingMergeTree(completed_at)\nORDER BY (symbol, kind, from_ts, to_ts)"),
      "ingest_windows ENGINE"),
     ("book_events sort key with the action/order_id discriminator",
-     ("CREATE TABLE IF NOT EXISTS gma.book_events", "CREATE TABLE IF NOT EXISTS gma.book_events"),
+     ("CREATE TABLE IF NOT EXISTS krn.book_events", "CREATE TABLE IF NOT EXISTS krn.book_events"),
      "book_events ORDER BY"),
-    ("gma.quotes uncommented",
-     ("-- CREATE TABLE IF NOT EXISTS gma.quotes",
-      "CREATE TABLE IF NOT EXISTS gma.quotes (ts_event DateTime64(9, 'UTC'), symbol LowCardinality(String), bid_px Int64, ask_px Int64) ENGINE = MergeTree ORDER BY (symbol, ts_event);\n-- CREATE TABLE IF NOT EXISTS gma.quotes"),
-     "gma.quotes is created"),
+    ("krn.quotes uncommented",
+     ("-- CREATE TABLE IF NOT EXISTS krn.quotes",
+      "CREATE TABLE IF NOT EXISTS krn.quotes (ts_event DateTime64(9, 'UTC'), symbol LowCardinality(String), bid_px Int64, ask_px Int64) ENGINE = MergeTree ORDER BY (symbol, ts_event);\n-- CREATE TABLE IF NOT EXISTS krn.quotes"),
+     "krn.quotes is created"),
     ("a live projection",
-     ("CREATE DATABASE IF NOT EXISTS gma;",
-      "CREATE DATABASE IF NOT EXISTS gma;\nALTER TABLE gma.trades ADD PROJECTION IF NOT EXISTS p_time_symbol ( SELECT * ORDER BY (ts_event, symbol) );"),
+     ("CREATE DATABASE IF NOT EXISTS krn;",
+      "CREATE DATABASE IF NOT EXISTS krn;\nALTER TABLE krn.trades ADD PROJECTION IF NOT EXISTS p_time_symbol ( SELECT * ORDER BY (ts_event, symbol) );"),
      "a projection is live"),
     ("ingest_windows key back to the session_id-before-clock form",
      ("ORDER BY (symbol, kind, from_ts, to_ts, updated_at)",
@@ -408,10 +408,10 @@ MUTANTS = [
      "DEFAULT now64(3)"),
     ("gaps partitioned on the detection day again",
      ("PARTITION BY toYYYYMMDD(ts_from)", "PARTITION BY toYYYYMMDD(ts_detected)"),
-     "gma.gaps PARTITION BY"),
+     "krn.gaps PARTITION BY"),
     ("an aggregating rollup appended",
-     ("CREATE DATABASE IF NOT EXISTS gma;",
-      "CREATE DATABASE IF NOT EXISTS gma;\nCREATE TABLE gma.bars (bucket DateTime64(9,'UTC'), symbol LowCardinality(String), volume AggregateFunction(sum, UInt64)) ENGINE = AggregatingMergeTree ORDER BY (symbol, bucket);"),
+     ("CREATE DATABASE IF NOT EXISTS krn;",
+      "CREATE DATABASE IF NOT EXISTS krn;\nCREATE TABLE krn.bars (bucket DateTime64(9,'UTC'), symbol LowCardinality(String), volume AggregateFunction(sum, UInt64)) ENGINE = AggregatingMergeTree ORDER BY (symbol, bucket);"),
      "AggregatingMergeTree"),
 ]
 
@@ -424,7 +424,7 @@ def _mutant_text(schema_text, label, pair):
         # table's. Anchored on the sort key followed by SETTINGS, because
         # scanning to the next `;` lands inside a column comment that contains
         # one ("-- Level index for AGGREGATED (L2) feeds; 0 for per-order").
-        i = schema_text.index("CREATE TABLE IF NOT EXISTS gma.book_events")
+        i = schema_text.index("CREATE TABLE IF NOT EXISTS krn.book_events")
         anchor = "ORDER BY (symbol, ts_event, provider_seq)\nSETTINGS"
         j = schema_text.index(anchor, i)
         out = (schema_text[:j]

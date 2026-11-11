@@ -23,7 +23,7 @@ tools/stack.sh doctor                 # exits non-zero if the server is not fit
 # from this directory:
 ./apply.sh --show-target              # which server am I about to talk to?
 ./apply.sh                            # idempotent apply + verify
-./apply.sh --fresh                    # DROP DATABASE gma first — DESTRUCTIVE
+./apply.sh --fresh                    # DROP DATABASE krn first — DESTRUCTIVE
 python3 check_no_compute.py lint      # no server needed
 python3 check_no_compute.py self-test # proves the lint can fail
 python3 apply.py self-test            # proves the comparison can fail; no server needed
@@ -42,7 +42,7 @@ wearing the same one is the failure this project keeps hitting.
 The last term is exactly how `tools/stack.sh` derives `CH_HTTP_PORT`, so a worktree at
 `STACK_PORT_OFFSET=270` reaches **its own** server on 8393. The first version of
 `apply.py` hardcoded `http://127.0.0.1:8123/`, which meant `./apply.sh --fresh` from
-any worktree ran `DROP DATABASE gma` on the **offset-zero** store — somebody else's L1.
+any worktree ran `DROP DATABASE krn` on the **offset-zero** store — somebody else's L1.
 `apply.sh --show-target` prints the resolution and touches nothing.
 
 `--fresh` carries two refusals, and the first runs **before any network call** so that

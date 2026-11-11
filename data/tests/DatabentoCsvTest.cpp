@@ -345,7 +345,7 @@ TEST(DatabentoCsvRefusals, AnUnknownSchemaHasNoTranscoderAndSaysSo) {
 
 TEST(DatabentoCsvRefusals, AnEmptyPullIsRefusedRatherThanRecordedAsAWindow) {
   const TempDir d;
-  // Header only. Writing a gma.ingest_windows row for this would assert
+  // Header only. Writing a krn.ingest_windows row for this would assert
   // coverage of a window with nothing in it — docs §8.8's exact failure.
   const auto p = d.file("x.csv", kMboHeader);
   const auto r = transcodeMboCsv(p, md("mbo"));
@@ -659,7 +659,7 @@ TEST(DatabentoCsvRetention, ReadingAnAbsentFileIsAnErrorNotAnEmptyBuffer) {
 TEST(DatabentoCsvTruncation, OutOfOrderTsEventIsRefusedRatherThanPublished) {
   const TempDir d;
   // `deliveredEnd()` publishes the LAST record's ts_event as the exclusive end
-  // written to gma.ingest_windows, and that is only the delivered end if the
+  // written to krn.ingest_windows, and that is only the delivered end if the
   // vendor emits in time order. The justification was an unchecked assumption
   // about the input; now it is asserted, and a violation is a REFUSAL rather
   // than a quietly smaller window.
@@ -925,7 +925,7 @@ TEST(DatabentoCsvJob, TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne) {
   const TempDir d;
   // `limit: 2` with exactly 2 records delivered — the real sample's shape in
   // miniature, driven through the JOB rather than through the transcoder, so
-  // what lands in `KindReport` is what `gma.ingest_windows` would have been
+  // what lands in `KindReport` is what `krn.ingest_windows` would have been
   // told.
   writeFakeRoot(
       d,
