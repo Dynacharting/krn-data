@@ -10,7 +10,7 @@
 // own DatabentoAdapter (no ClickHouse, no CSV), driven through the
 // engine's Dispatcher into a NON-WINDOWED graph built by the engine's own
 // TreeBuilder (D9: nothing here waits on a clock, so nothing needs event time).
-// Each STEP is one way of getting a record into the Dispatcher. Steps 1 and 2
+// Each STEP is one way of getting a record into the Dispatcher. Steps 1-3
 // exist at the pinned engine commit:
 //
 //   1. json-ontick   today's JSON path: a rapidjson DOM synthesized per record
@@ -18,6 +18,10 @@
 //                    `Dispatcher::onTick`. DOM construction is INSIDE the timed
 //                    region, because that is the cost the step exists to show.
 //   2. onrecord      `Dispatcher::onRecord` over a `RecordFieldSource`; no DOM.
+//   3. inline-dag    step 2 with krn's `Config::inlineDagDrive` on (ENC-1625):
+//                    each request DAG gets an inline strand, so the graph runs
+//                    on the ingress thread with no `ThreadPool::post` between
+//                    nodes.
 //
 // ONE DATA POINT PER FILE, chosen by what the file decodes to (ENC-1628):
 //
@@ -33,8 +37,8 @@
 // points are separate runs with separate references and are never summed:
 // docs/data-layer.md §C13, the same execution is in both files.
 //
-// Steps 3-5 (inline DAG drive, interned symbols, store-write elision) are
-// engine changes in krn and are NOT implemented here. Each plugs in as one more
+// Steps 4-5 (interned symbols, store-write elision) are engine changes in krn
+// and are NOT implemented here. Each plugs in as one more
 // entry in `steps()` below: a `configure` hook for whatever engine knob the
 // step introduces, an `ingest` call, and an `OutputContract` saying what it
 // must reproduce byte-for-byte. Nothing else in the harness changes.
@@ -78,6 +82,8 @@
 #include "krn/engine/FieldSource.hpp"
 #include "krn/engine/SymbolTable.hpp"
 #include "krn/nodes/INode.hpp"
+#include "krn/nodes/Listener.hpp"
+#include "krn/rt/Strand.hpp"
 #include "krn/rt/ThreadPool.hpp"
 #include "krn/util/Config.hpp"
 
@@ -400,7 +406,7 @@ std::vector<std::pair<std::string, double>> fieldsOf(const Rec& r) {
 }
 
 // ---------------------------------------------------------------------------
-// Steps. THE PLUG POINT for steps 3-5: add an entry. `configure` sets whatever
+// Steps. THE PLUG POINT for steps 4-5: add an entry. `configure` sets whatever
 // engine knob the step introduces on the Dispatcher's Config; `ingest` drives
 // one record; `contract` says what it must reproduce. A step whose engine
 // support does not exist at the pin is simply not listed (it cannot be
@@ -485,8 +491,22 @@ const std::vector<StepSpec<Rec>>& steps() {
          }
        },
        {}},
-      // 3 inline-dag  — needs krn: a Dispatcher/Listener mode with no
-      //                 ThreadPool::post between nodes (see ENC-1487 report).
+      {3, "inline-dag", "onRecord, DAG on the ingress thread (inlineDagDrive)",
+       [](util::Config& c) { c.inlineDagDrive = true; },
+       [](Rig& rig, std::span<const Rec> rows, const std::string&, FalsifyState*) {
+         // Refuse rather than measure the pool path under step 3's name: every
+         // DAG's head Listener must hold the inline strand.
+         for (const auto& c : rig.chains) {
+           auto l = std::dynamic_pointer_cast<nodes::Listener>(c.head);
+           if (!l || !l->strand() || !l->strand()->isInline())
+             throw std::runtime_error("step 3: a DAG is not on the inline executor");
+         }
+         for (const auto& r : rows) {
+           const Source fields(r);
+           rig.disp.onRecord(r.header.symbolId, fields);
+         }
+       },
+       {}},
       // 4 interned    — needs krn: StreamValue carrying a SymbolId.
       // 5 store-elide — needs krn: the set of keys pull nodes read; contract.store=false.
   };
@@ -619,7 +639,7 @@ double percentile(std::vector<double> v, double p) {
   return v[lo] + (v[hi] - v[lo]) * (idx - static_cast<double>(lo));
 }
 
-// One data point: steps 1-2 over `rows`, compared byte-for-byte to step 1.
+// One data point: every listed step over `rows`, compared byte-for-byte to step 1.
 template <typename Rec>
 int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
             const data::SymbolTable& symbols) {
