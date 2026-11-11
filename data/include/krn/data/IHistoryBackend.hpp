@@ -184,7 +184,8 @@ public:
 //
 // TRANSPORT IS UNDECIDED AND IS BENCHMARK B1 (docs §5.2, §14.3). Native
 // protocol speaks column blocks; HTTP speaks `FORMAT ArrowStream`. Either
-// avoids row materialization and which is faster is unmeasured. This reverses
+// avoids row materialization; B1 on the 1000-row T5 sample could not separate
+// them (docs §14.3), so which is faster is still open. This reverses
 // an earlier lean toward HTTP: that was right when the backend was optional,
 // and the shim's throughput is now the entire performance story.
 class ClickHouseL1Store final : public IL1Store {
