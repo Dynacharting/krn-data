@@ -139,14 +139,35 @@ endif()
 # linked ONLY into this executable -- never into krn_data, so neither
 # krn_data's consumers nor the engine acquire it (SPEC D14; the engine's
 # check_engine_isolation.py refuses `clickhouse/` includes in engine code).
-# Its bundled contrib (absl int128, cityhash, lz4, zstd) is used as shipped;
 # WITH_OPENSSL stays OFF (loopback, no TLS).
+#
+# LZ4 IS ARROW'S, NOT A SECOND COPY. With the IPC codecs on (the default),
+# Arrow's own FetchContent of lz4 already defines a target named `lz4`, and
+# clickhouse-cpp's bundled contrib/lz4 dies on CMP0002 trying to define the
+# same name. So clickhouse-cpp is pointed at the lz4 this build already has:
+# WITH_SYSTEM_LZ4=ON, with `lz4::lz4` pre-defined as an alias of Arrow's
+# `lz4_static` (its Findlz4.cmake keeps an existing `lz4::lz4`). One lz4 in the
+# binary, not two archives racing for the same symbols. absl int128, cityhash
+# and zstd come from clickhouse-cpp's contrib as shipped.
 if (KRN_DATA_BUILD_BENCHMARKS)
   include(FetchContent)
   set(BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
   set(BUILD_TESTS     OFF CACHE BOOL "" FORCE)
   set(WITH_OPENSSL    OFF CACHE BOOL "" FORCE)
   set(DEBUG_DEPENDENCIES OFF CACHE BOOL "" FORCE)
+  if (TARGET lz4_static)
+    FetchContent_GetProperties(lz4 SOURCE_DIR _kd_lz4_src)
+    if (NOT EXISTS "${_kd_lz4_src}/lib/lz4.h")
+      message(FATAL_ERROR "krn-data: Arrow's lz4 has no lib/lz4.h under '${_kd_lz4_src}'")
+    endif()
+    add_library(lz4::lz4 ALIAS lz4_static)
+    set(WITH_SYSTEM_LZ4 ON CACHE BOOL "" FORCE)
+    set(lz4_INCLUDE_DIR "${_kd_lz4_src}/lib" CACHE PATH "" FORCE)
+    set(lz4_LIBRARY lz4_static CACHE STRING "" FORCE)
+    message(STATUS "krn-data: clickhouse-cpp uses Arrow's lz4 (${_kd_lz4_src})")
+  else()
+    set(WITH_SYSTEM_LZ4 OFF CACHE BOOL "" FORCE)
+  endif()
   FetchContent_Declare(clickhouse_cpp
     GIT_REPOSITORY https://github.com/ClickHouse/clickhouse-cpp.git
     GIT_TAG        001025cd72d904104c15657e85e0fb6b0ec58e14  # v2.6.2
