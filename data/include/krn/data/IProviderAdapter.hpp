@@ -134,9 +134,9 @@ struct NormalizerConfig {
   bool          recordGaps = true;        // docs Q9
 };
 
-// Owns durability. Everything gma reads was written here, and gma writing
-// nothing on the raw path is the point (docs §3 rule 1): a gma crash loses no
-// raw data because gma never held it.
+// Owns durability. Everything krn reads was written here, and krn writing
+// nothing on the raw path is the point (docs §3 rule 1): a krn crash loses no
+// raw data because krn never held it.
 //
 // Three outputs from one input:
 //   1. the live tail   — Arrow IPC stream, record-at-a-time, crash-readable;

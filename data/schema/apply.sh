@@ -7,7 +7,7 @@
 # second and third applications must be no-ops rather than errors — this script
 # is how that claim is checked rather than asserted.
 #
-# WHICH SERVER IT TALKS TO, because --fresh runs DROP DATABASE gma:
+# WHICH SERVER IT TALKS TO, because --fresh runs DROP DATABASE krn:
 #   --url <u>  >  CH_HTTP_URL  >  CH_HTTP_PORT  >  8123 + STACK_PORT_OFFSET
 # the last of which is exactly how tools/stack.sh derives CH_HTTP_PORT, so a
 # worktree at STACK_PORT_OFFSET=270 reaches its OWN server on 8393 and not the
@@ -21,7 +21,7 @@
 #
 #   ./apply.sh                   lint + self-tests + idempotent apply + verify
 #   ./apply.sh --show-target     print the resolved endpoint and stop
-#   ./apply.sh --fresh           the same, but DROP DATABASE gma first (DESTRUCTIVE)
+#   ./apply.sh --fresh           the same, but DROP DATABASE krn first (DESTRUCTIVE)
 #
 # --fresh is what makes it "from scratch". It destroys every L1 row; that is
 # survivable only because SPEC D6 retains the raw DBN files, so re-ingest is a

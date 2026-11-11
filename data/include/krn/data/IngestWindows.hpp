@@ -1,10 +1,10 @@
 #pragma once
 //
-// `gma.ingest_windows` — the read rule, as code (ENC-1483).
+// `krn.ingest_windows` — the read rule, as code (ENC-1483).
 //
 // Design: specs/2026-10-14-krn-data-layer/SPEC.md D11;
 //         docs/data-layer.md §8.8; and the ⚠ READ RULE block in
-//         `data/schema/clickhouse.sql` above `CREATE TABLE gma.ingest_windows`,
+//         `data/schema/clickhouse.sql` above `CREATE TABLE krn.ingest_windows`,
 //         which is the authority this file implements rather than reinvents.
 //
 // THE RULE, QUOTED FROM THE DDL:
@@ -57,7 +57,7 @@
 
 namespace krn::data {
 
-// One row of `gma.ingest_windows`, as selected. Only the five fields the rule
+// One row of `krn.ingest_windows`, as selected. Only the five fields the rule
 // reads are here; `session_id`, `rows_inserted`, `completed_at`, `source` and
 // `source_ref` are provenance and diagnostics and are deliberately absent, so
 // no future edit can quietly start consulting them.

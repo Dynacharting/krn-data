@@ -681,7 +681,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> ipcRoundTrip(
   // over HTTP.
   if (schemaVersionOf(*reader->schema()) != kSchemaVersion) {
     return arrow::Status::Invalid(
-        "gma.schema_version did not survive the IPC stream (got ",
+        "krn.schema_version did not survive the IPC stream (got ",
         schemaVersionOf(*reader->schema()), ")");
   }
   std::shared_ptr<arrow::RecordBatch> got;

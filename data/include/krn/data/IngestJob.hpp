@@ -12,7 +12,7 @@
 //                 ──DbnEncoder───▶ REAL DBN BYTES, written to disk (D6)
 //                 ──read back────▶ the retained file, from disk
 //                 ──DatabentoAdapter──▶ TickRecord / BookRecord
-//                 ──TabSeparated──▶ gma.trades / gma.book_events
+//                 ──TabSeparated──▶ krn.trades / krn.book_events
 //
 // The read-back is not ceremony. D5's re-ingest is `DROP PARTITION` + reload
 // and D6 makes the retained files what it reloads FROM, so the job decodes the
@@ -110,7 +110,7 @@ struct KindReport {
   std::size_t rowsInserted   = 0;
 
   // The REQUESTED window from the pull metadata, and the window actually
-  // RECORDED in gma.ingest_windows. They differ when the pull was truncated,
+  // RECORDED in krn.ingest_windows. They differ when the pull was truncated,
   // and that difference is the whole D11 story on this sample.
   std::int64_t requestedFromNs = 0;
   std::int64_t requestedToNs   = 0;
@@ -204,7 +204,7 @@ arrow::Result<Report> run(const Options& opts);
 // The completeness read (D11), against a live server.
 // ---------------------------------------------------------------------------
 //
-// Selects every `gma.ingest_windows` row for one `(symbol, kind)` — projection
+// Selects every `krn.ingest_windows` row for one `(symbol, kind)` — projection
 // and a `WHERE` on the key prefix, no aggregate, no `FINAL`, no `argMax` — and
 // hands them to `krn::data::isComplete`. The coverage test is in C++ because
 // the DDL says so: it keeps this a plain selection on this side of the D2

@@ -102,7 +102,7 @@ struct RecordHeader {
 
   // The DBN instrument_id, retained for provenance (SPEC D7). It is
   // dataset-scoped and reassignable, so it is NOT a key and NOT an operator
-  // input; `gma.symbology` holds the mapping. Carried here because it is free
+  // input; `krn.symbology` holds the mapping. Carried here because it is free
   // — without it this struct is 36 bytes padded to 40 — and because dropping
   // it would make the Arrow round trip lossy.
   std::uint32_t instrumentId = 0;

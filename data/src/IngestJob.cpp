@@ -61,7 +61,7 @@ const char* const kSessionIdRuling =
     "RULE, never uniqueness.";
 
 const char* const kGapsNote =
-    "ZERO gma.gaps ROWS WRITTEN, AND NOT FOR LACK OF SCOPE: THE SEQ-"
+    "ZERO krn.gaps ROWS WRITTEN, AND NOT FOR LACK OF SCOPE: THE SEQ-"
     "DISCONTINUITY DETECTOR CANNOT RUN ON A SYMBOL-FILTERED PULL.\n"
     "  docs 8.8 detects a provider hole as 'a seq discontinuity'. Databento's "
     "`sequence` is the VENUE's, not the symbol's: in this sample consecutive "
@@ -206,7 +206,7 @@ arrow::Result<Decoded> decodeDbn(const std::vector<std::byte>& bytes,
         "decode yielded ", symbolIds.size(), " symbol(s) and ",
         instrumentIds.size(),
         " instrument_id(s). This slice is one symbol (SPEC 6) and the window is "
-        "recorded PER SYMBOL in gma.ingest_windows, so a multi-symbol file is "
+        "recorded PER SYMBOL in krn.ingest_windows, so a multi-symbol file is "
         "refused rather than recorded under one of them."));
   }
   d.symbol       = symbols.name(*symbolIds.begin());
@@ -235,7 +235,7 @@ constexpr const char* kBookEventsColumns =
 
 // A field this renderer omits is a field no round-trip assertion covers and no
 // L1 column holds, so the two facts stay tied together. TickRecord's quote half
-// (bidPx/askPx/bidSz/askSz/bidCt/askCt) is omitted because `gma.quotes` is not
+// (bidPx/askPx/bidSz/askSz/bidCt/askCt) is omitted because `krn.quotes` is not
 // in this slice (SPEC Non-goals) and nothing populates it.
 std::string renderTradeRow(const TickRecord& t, const std::string& symbol,
                            const std::string& venue) {
@@ -286,7 +286,7 @@ arrow::Status writeWindowRow(const ch::Client& client, const std::string& symbol
                              std::uint64_t rowsInserted, std::uint32_t sessionId,
                              const std::string& sourceRef) {
   std::ostringstream q;
-  q << "INSERT INTO gma.ingest_windows (symbol, kind, from_ts, to_ts, state, "
+  q << "INSERT INTO krn.ingest_windows (symbol, kind, from_ts, to_ts, state, "
        "rows_inserted, updated_at, completed_at, session_id, source, source_ref) "
        "SELECT "
     << ch::sqlQuote(symbol) << ", " << ch::sqlQuote(kind)
@@ -388,7 +388,7 @@ arrow::Result<Completeness> queryCompleteness(const ch::Client& client,
   std::ostringstream q;
   q << "SELECT toUnixTimestamp64Nano(from_ts), toUnixTimestamp64Nano(to_ts), "
        "toUInt16(state), toUnixTimestamp64Milli(updated_at) "
-       "FROM gma.ingest_windows WHERE symbol = "
+       "FROM krn.ingest_windows WHERE symbol = "
     << ch::sqlQuote(symbol) << " AND kind = " << ch::sqlQuote(kind)
     << " FORMAT TabSeparated";
   ARROW_ASSIGN_OR_RAISE(const auto rows, client.select(q.str()));
@@ -397,7 +397,7 @@ arrow::Result<Completeness> queryCompleteness(const ch::Client& client,
   parsed.reserve(rows.size());
   for (const auto& r : rows) {
     if (r.size() != 4) {
-      return arrow::Status::Invalid("gma.ingest_windows row has ", r.size(),
+      return arrow::Status::Invalid("krn.ingest_windows row has ", r.size(),
                                     " field(s), expected 4");
     }
     IngestWindowRow w;
@@ -420,7 +420,7 @@ arrow::Result<std::int64_t> rowCount(const ch::Client& client,
   // `table` is NOT interpolated from user input — it is one of two string
   // literals chosen by the caller's `KindSpec` — but `symbol` is, and comes
   // from vendor DBN symbology as well as from the CLI.
-  q << "SELECT count() FROM gma." << table << " WHERE symbol = "
+  q << "SELECT count() FROM krn." << table << " WHERE symbol = "
     << ch::sqlQuote(symbol) << " AND ts_event >= fromUnixTimestamp64Nano(toInt64("
     << fromNs << "), 'UTC') AND ts_event < fromUnixTimestamp64Nano(toInt64("
     << toNs << "), 'UTC')";
@@ -443,7 +443,7 @@ arrow::Result<Report> run(const Options& opts) {
 
   const std::string root = expandTilde(opts.dataRoot);
 
-  // The two kinds. `kind` is gma.ingest_windows' value (and the table name);
+  // The two kinds. `kind` is krn.ingest_windows' value (and the table name);
   // `dbnSchema` is the vendor's. They differ for MBO — the vendor calls the
   // schema `mbo` and L1's table is `book_events` — and conflating them writes a
   // completeness row under a kind no reader queries.
@@ -501,7 +501,7 @@ arrow::Result<Report> run(const Options& opts) {
       // metadata.json is accepted ONLY if its own `query.schema` matches the
       // file being read. A mismatch is refused with the command that fixes it,
       // because the fields at stake (`start`, `end`, `limit`) are exactly what
-      // gma.ingest_windows forms an opinion from.
+      // krn.ingest_windows forms an opinion from.
       const std::string sidecar = root + "/metadata." + spec.dbnSchema + ".json";
       const std::string shared  = root + "/metadata.json";
       const std::string mdPath  = fileExists(sidecar) ? sidecar : shared;
@@ -512,7 +512,7 @@ arrow::Result<Report> run(const Options& opts) {
             ") but the `", spec.dbnSchema,
             "` CSV is being read. Two batch jobs extracted into one directory "
             "leave one metadata.json, and `start`/`end`/`limit` from the wrong "
-            "job would be recorded in gma.ingest_windows as this pull's window. "
+            "job would be recorded in krn.ingest_windows as this pull's window. "
             "Extract the per-job sidecars first, e.g.\n"
             "    for z in ", root,
             "/*.zip; do s=$(unzip -p \"$z\" metadata.json | "
@@ -701,7 +701,7 @@ arrow::Result<Report> run(const Options& opts) {
         return asFinding(arrow::Status::Invalid(
             "the DBN for kind `", spec.kind, "` decoded into ",
             whole.ticks.size(), " tick record(s) and ", whole.book.size(),
-            " book record(s), but gma.", spec.table, " holds only the ",
+            " book record(s), but krn.", spec.table, " holds only the ",
             wantTicks ? "tick" : "book",
             " kind. Inserting the matching half and recording the window "
             "complete would assert coverage over rows that were silently "
@@ -808,7 +808,7 @@ arrow::Result<Report> run(const Options& opts) {
       const std::int64_t dayTo = dayFrom + 86400000000000LL;
       std::ostringstream q;
       q << "SELECT DISTINCT symbol, toUnixTimestamp64Nano(from_ts), "
-           "toUnixTimestamp64Nano(to_ts) FROM gma.ingest_windows WHERE kind = "
+           "toUnixTimestamp64Nano(to_ts) FROM krn.ingest_windows WHERE kind = "
         << ch::sqlQuote(st.rep.kind) << " AND symbol != "
         << ch::sqlQuote(st.rep.symbol)
         << " AND from_ts < fromUnixTimestamp64Nano(toInt64(" << dayTo
@@ -825,7 +825,7 @@ arrow::Result<Report> run(const Options& opts) {
         // to prevent it. It refuses now.
         if (r.size() != 3) {
           return arrow::Status::Invalid(
-              "a gma.ingest_windows row came back with ", r.size(),
+              "a krn.ingest_windows row came back with ", r.size(),
               " field(s) instead of 3 while collecting the other symbols whose "
               "completeness this DROP PARTITION invalidates. Refusing rather "
               "than skipping: a skipped row leaves another symbol asserting "
@@ -856,7 +856,7 @@ arrow::Result<Report> run(const Options& opts) {
     // ---- DROP PARTITION, then reload (D5) ------------------------------
     for (const std::uint32_t day : days) {
       std::ostringstream q;
-      q << "ALTER TABLE gma." << st.table << " DROP PARTITION " << day;
+      q << "ALTER TABLE krn." << st.table << " DROP PARTITION " << day;
       ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
       rep.partitionsDropped.push_back(st.table + ":" + std::to_string(day));
     }
@@ -894,7 +894,7 @@ arrow::Result<Report> run(const Options& opts) {
                                         : a.providerSeq < b.providerSeq;
     });
 
-    std::string body = "INSERT INTO gma.";
+    std::string body = "INSERT INTO krn.";
     body += st.table;
     body += " (";
     body += st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns;
@@ -926,7 +926,7 @@ arrow::Result<Report> run(const Options& opts) {
       // `dataset` and `raw_symbol` come out of the vendor DBN's own metadata,
       // and `source_ref` is either a vendor job id or a filesystem path — all
       // three are quoted rather than concatenated (finding #5).
-      q << "INSERT INTO gma.symbology (dataset, instrument_id, raw_symbol, "
+      q << "INSERT INTO krn.symbology (dataset, instrument_id, raw_symbol, "
            "valid_from, valid_to, source_ref, ingested_at) SELECT "
         << ch::sqlQuote(st.dataset) << ", " << m.instrumentId << ", "
         << ch::sqlQuote(m.rawSymbol) << ", fromUnixTimestamp64Nano(toInt64("

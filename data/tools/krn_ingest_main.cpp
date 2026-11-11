@@ -48,7 +48,7 @@ void usage() {
   std::cout <<
       "usage: krn_ingest <ingest|reload|verify|resolve-target> [options]\n"
       "\n"
-      "  ingest           CSV -> DBN (retained) -> adapter -> gma.\n"
+      "  ingest           CSV -> DBN (retained) -> adapter -> krn.\n"
       "  reload           the SPEC D6 reload: the retained DBN only, no CSV.\n"
       "  verify           the D11 demonstration, through the DDL's read rule.\n"
       "  resolve-target   print which ClickHouse would be used; touch nothing.\n"
@@ -245,7 +245,7 @@ void printKind(const ingest::KindReport& k) {
     std::cout << "  ts_recv == ts_event + ts_in_delta : " << k.tsRecvMatchesDelta
               << " / " << k.csvRecords << "\n";
   }
-  std::cout << "  DBN side 'N' on a row (kGmaFlagSideUnspecified) : "
+  std::cout << "  DBN side 'N' on a row (kKrnFlagSideUnspecified) : "
             << k.sideUnspecified << "\n";
   std::cout << "  sort key (symbol, ts_event, provider_seq): "
             << k.distinctSortKeys << " distinct over " << k.canonicalRows
@@ -328,7 +328,7 @@ int cmdIngest(const Args& a, bool fromDbnOnly) {
 
   std::cout << "\n=== session_id reuse — THE RULING (assigned here from ENC-1480) ===\n"
             << rep.sessionIdRuling << "\n";
-  std::cout << "\n=== gma.gaps ===\n" << rep.gapsNote << "\n";
+  std::cout << "\n=== krn.gaps ===\n" << rep.gapsNote << "\n";
   return kClean;
 }
 
@@ -336,7 +336,7 @@ int cmdIngest(const Args& a, bool fromDbnOnly) {
 // verify — the D11 demonstration.
 //
 // Every verdict goes through krn::data::isComplete over rows selected from
-// gma.ingest_windows, i.e. through the DDL's own read rule: newest row by
+// krn.ingest_windows, i.e. through the DDL's own read rule: newest row by
 // updated_at per recorded window, require state = 1, then test COVERAGE of the
 // request. Row counts are printed and NEVER consulted — a quiet window and a
 // missing window have the same count (D11), which is the entire reason the
@@ -451,7 +451,7 @@ int cmdVerify(const Args& a) {
         std::cerr << "krn_ingest: " << n.status().ToString() << "\n";
         return kCouldNotRun;
       }
-      std::cout << "         gma." << k.table << " rows in that range: " << *n
+      std::cout << "         krn." << k.table << " rows in that range: " << *n
                 << "   <- DIAGNOSTIC ONLY; a quiet window and a missing window "
                    "have the same count (D11)\n";
     }
@@ -487,7 +487,7 @@ int cmdVerify(const Args& a) {
     for (const auto& w : wide->survivingWindows) {
       std::ostringstream q;
       q << "SELECT rows_inserted, toUnixTimestamp64Milli(updated_at) "
-           "FROM gma.ingest_windows WHERE symbol = "
+           "FROM krn.ingest_windows WHERE symbol = "
         << ch::sqlQuote(a.symbol) << " AND kind = " << ch::sqlQuote(k.kind)
         << " AND from_ts = fromUnixTimestamp64Nano(toInt64(" << w.fromNs
         << "), 'UTC') AND to_ts = fromUnixTimestamp64Nano(toInt64(" << w.toNs
@@ -504,7 +504,7 @@ int cmdVerify(const Args& a) {
       long long newest = -1;
       for (const auto& r : *rows) {
         if (r.size() != 2) {
-          std::cerr << "krn_ingest: gma.ingest_windows row has " << r.size()
+          std::cerr << "krn_ingest: krn.ingest_windows row has " << r.size()
                     << " field(s), expected 2\n";
           return kCouldNotRun;
         }
@@ -547,11 +547,11 @@ int cmdVerify(const Args& a) {
   }
 
   // Symbology, which is the other half of D7.
-  std::cout << "\n================ gma.symbology ================\n";
+  std::cout << "\n================ krn.symbology ================\n";
   // No interpolation here at all — the whole statement is a literal.
   auto sym = client.select(
       "SELECT dataset, instrument_id, raw_symbol, toString(valid_from), "
-      "toString(valid_to), source_ref FROM gma.symbology FINAL ORDER BY "
+      "toString(valid_to), source_ref FROM krn.symbology FINAL ORDER BY "
       "dataset, instrument_id, valid_from FORMAT TabSeparated");
   if (!sym.ok()) {
     std::cerr << "krn_ingest: " << sym.status().ToString() << "\n";
