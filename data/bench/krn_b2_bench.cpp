@@ -529,12 +529,25 @@ std::string compare(const RunOutput& ref, const RunOutput& got, const OutputCont
 // Input: the retained DBN file, through krn-data's adapter.
 // ---------------------------------------------------------------------------
 struct Sample {
-  std::vector<data::TickRecord> rows;
+  std::vector<data::TickRecord> trades;
+  std::vector<data::BookRecord> book;
   std::string                   ticker;
   std::uint64_t                 bytes = 0;
-  std::uint64_t                 bookEvents = 0;
   std::uint64_t                 fnv1a32 = 0;
 };
+
+// Every row must name one symbol; returns it, or 0 after printing why not.
+template <typename Rec>
+data::SymbolId singleSymbol(const std::vector<Rec>& rows) {
+  const data::SymbolId sid = rows.front().header.symbolId;
+  for (const auto& r : rows) {
+    if (r.header.symbolId != sid) {
+      std::cerr << "krn_b2_bench: sample spans more than one symbol; refused\n";
+      return 0;
+    }
+  }
+  return sid;
+}
 
 int loadSample(const std::string& path, data::SymbolTable& symbols, Sample& out) {
   std::ifstream f(path, std::ios::binary);
@@ -552,21 +565,16 @@ int loadSample(const std::string& path, data::SymbolTable& symbols, Sample& out)
   auto st = ad.feed(std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.data()), raw.size()));
   if (st.ok()) st = ad.finish();
   if (!st.ok()) { std::cerr << "krn_b2_bench: decode refused: " << st.ToString() << "\n"; return kExitCouldNot; }
-  out.rows = ad.takeTrades();
-  out.bookEvents = ad.takeBookEvents().size();
-  if (out.rows.empty()) {
-    std::cerr << "krn_b2_bench: " << path << " decoded to 0 TickRecords (" << out.bookEvents
-              << " BookRecords). onRecord at this engine pin takes a TickRecord's FieldSource"
-                 " only; there is nothing to measure.\n";
+  out.trades = ad.takeTrades();
+  out.book   = ad.takeBookEvents();
+  if (out.trades.empty() == out.book.empty()) {
+    std::cerr << "krn_b2_bench: " << path << " decoded to " << out.trades.size() << " TickRecords and "
+              << out.book.size() << " BookRecords; a data point is one schema, so exactly one must"
+                 " be non-empty\n";
     return kExitCouldNot;
   }
-  const data::SymbolId sid = out.rows.front().header.symbolId;
-  for (const auto& r : out.rows) {
-    if (r.header.symbolId != sid) {
-      std::cerr << "krn_b2_bench: sample spans more than one symbol; refused\n";
-      return kExitCouldNot;
-    }
-  }
+  const data::SymbolId sid = out.trades.empty() ? singleSymbol(out.book) : singleSymbol(out.trades);
+  if (sid == 0) return kExitCouldNot;
   out.ticker = symbols.name(sid);
   if (out.ticker.empty()) { std::cerr << "krn_b2_bench: symbolId resolves to no ticker\n"; return kExitCouldNot; }
   return kExitIdentical;
