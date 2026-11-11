@@ -14,7 +14,7 @@
 /* A block comment, because the stripper has to handle both forms:
    ENGINE = SummingMergeTree, a MATERIALIZED column `mid Int64 MATERIALIZED
    (bid_px + ask_px) / 2`, and
-   CREATE MATERIALIZED VIEW gma.bars AS SELECT sum(size) FROM gma.trades
+   CREATE MATERIALIZED VIEW krn.bars AS SELECT sum(size) FROM krn.trades
    GROUP BY toStartOfMinute(ts_event);
    None of this is SQL. All of it is prose about SQL. */
 

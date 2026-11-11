@@ -11,9 +11,9 @@ review, not an implementation** — see *What is real and what is still a sketch
 
 ## The one thing to understand before reading any of it
 
-> **ClickHouse does selection. gma does computation. Nothing computes a value twice.**
+> **ClickHouse does selection. krn does computation. Nothing computes a value twice.**
 
-Not architectural taste — a product requirement. A transpiler that reimplemented gma's math
+Not architectural taste — a product requirement. A transpiler that reimplemented krn's math
 in SQL would differ in float accumulation order, bucket edge inclusivity, EMA seeding and
 gap handling, and this system exists to read differences of that size as *signal*. A
 discrepancy manufactured by the storage layer is indistinguishable from an indication, so
@@ -106,7 +106,7 @@ control when built: its closure must trip a forbidden pattern (it links `krn::ar
 | `include/krn/data/DatabentoAdapter.hpp` + `src/DatabentoAdapter.cpp` | **real** — the DBN decoder and the DBN→canonical mapping (ENC-1482) |
 | `include/krn/data/DbnEncoder.hpp` + `src/DbnEncoder.cpp` | **real** — a DBN *encoder*, promoted out of the test TU (ENC-1483). It is a non-circularity instrument first and a component second: the layout claims in `DatabentoAdapter.hpp` are believed only because this code reproduces five real vendor files byte for byte |
 | `include/krn/data/DatabentoCsv.hpp` + `src/DatabentoCsv.cpp` | **real** — vendor CSV → the vendor's own PODs → real DBN, plus `metadata.json` and D6 retention (ENC-1483). It stops at `dbn::MboMsg`/`dbn::TradeMsg`: one mapping to canonical form exists and it is the adapter's (D1) |
-| `include/krn/data/IngestWindows.hpp` + `src/IngestWindows.cpp` | **real** — the `gma.ingest_windows` read rule, as code (ENC-1483) |
+| `include/krn/data/IngestWindows.hpp` + `src/IngestWindows.cpp` | **real** — the `krn.ingest_windows` read rule, as code (ENC-1483) |
 | `include/krn/data/ClickHouseHttp.hpp` + `src/ClickHouseHttp.cpp` | **real** — a minimal Boost.Beast HTTP client, for the ingest job only. Not the native-protocol client: that is one arm of ENC-1485's B1 measurement and shipping it here would pre-answer it |
 | `include/krn/data/IngestJob.hpp` + `src/IngestJob.cpp` + `tools/krn_ingest_main.cpp` | **real** — the ingest job and the `krn_ingest` binary (ENC-1483) |
 | `tests/fixtures/dbn/` | **real Databento DBN bytes**, Apache-2.0 — see `PROVENANCE.md` there |
@@ -148,7 +148,7 @@ two-record sample cannot.
 `krn_ingest` (ENC-1483) is the only writer into L1. The path is **vendor CSV →
 `DatabentoCsv` → the vendor's own 56-/48-byte PODs → `DbnEncoder` → real DBN bytes written to
 disk → read back from disk → `DatabentoAdapter` → `TickRecord`/`BookRecord` →
-`FORMAT TabSeparated` into `gma.trades`/`gma.book_events`**. The DBN leg is not a detour: the
+`FORMAT TabSeparated` into `krn.trades`/`krn.book_events`**. The DBN leg is not a detour: the
 canonical adapter is a DBN decoder, and a second CSV→canonical mapping is what SPEC D1
 refuses, so the CSV is translated into the *vendor's* encoding and stops there. The read-back
 is not ceremony either — D5's re-ingest is `DROP PARTITION` + reload and D6 makes the retained

@@ -8,10 +8,10 @@
 // ============================================================================
 //
 // docs/data-layer.md §1 is the governing decision: ClickHouse is indexed,
-// compressed, columnar STORAGE AND SELECTION, and gma performs 100% of the
+// compressed, columnar STORAGE AND SELECTION, and krn performs 100% of the
 // computation through one implementation of every operator.
 //
-// The reason is not architectural taste. A transpiler that reimplemented gma's
+// The reason is not architectural taste. A transpiler that reimplemented krn's
 // math in SQL would produce small numerical differences — float accumulation
 // order, bucket edge inclusivity, EMA seeding, gap handling — and this system
 // exists to read differences of that size as signal. A discrepancy
@@ -83,7 +83,7 @@ struct BackendCapabilities {
   std::string describe;            // one line, for the startup log
 };
 
-// A PULL-based block stream, and pull is the point: gma computes slower than
+// A PULL-based block stream, and pull is the point: krn computes slower than
 // ClickHouse reads, so a push stream would deliver the whole window as fast as
 // the wire allows and buffer a month in RAM. The consumer sets the pace
 // (docs §5.2 requirement 3).
@@ -98,7 +98,7 @@ public:
 // What rows to select. Deliberately NOT a query string and NOT an interval:
 // there is no `interval` parameter anywhere in this interface, because an
 // interval implies bucketing and bucketing is computation. Bars are produced
-// by gma's TumblingWindow / BucketTime, from the rows this returns.
+// by krn's TumblingWindow / BucketTime, from the rows this returns.
 struct Selection {
   std::span<const std::string> symbols;
   TimeRange                    range;        // half-open [fromNs, toNs) on ts_event
@@ -155,7 +155,7 @@ public:
   // answer.
   virtual bool isComplete(std::string_view symbol, TimeRange range) const = 0;
 
-  // WRITE (ingest side only; gma never writes the raw path). Insert
+  // WRITE (ingest side only; krn never writes the raw path). Insert
   // symbol-sorted batches per day partition: the sort key leads with symbol,
   // so raw DBN file order forces a per-part re-sort (docs §8.6).
   virtual void insert(const CanonicalBatch& batch) = 0;
@@ -184,7 +184,8 @@ public:
 //
 // TRANSPORT IS UNDECIDED AND IS BENCHMARK B1 (docs §5.2, §14.3). Native
 // protocol speaks column blocks; HTTP speaks `FORMAT ArrowStream`. Either
-// avoids row materialization and which is faster is unmeasured. This reverses
+// avoids row materialization; B1 on the 1000-row T5 sample could not separate
+// them (docs §14.3), so which is faster is still open. This reverses
 // an earlier lean toward HTTP: that was right when the backend was optional,
 // and the shim's throughput is now the entire performance story.
 class ClickHouseL1Store final : public IL1Store {
@@ -193,7 +194,7 @@ public:
 
   struct Config {
     std::string  endpoint;
-    std::string  database = "gma";
+    std::string  database{kL1Database};
     std::string  user;
     std::string  password;             // from env; never from an INI file
     Transport    transport = Transport::Native;   // pending B1
@@ -217,7 +218,7 @@ public:
   void flush() override;
 
   // Applies data/schema/clickhouse.sql. Idempotent (every statement is
-  // IF NOT EXISTS). Startup only; gma never issues DDL on a hot path.
+  // IF NOT EXISTS). Startup only; krn never issues DDL on a hot path.
   void ensureSchema();
 
 private:

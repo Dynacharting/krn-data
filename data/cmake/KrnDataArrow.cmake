@@ -193,7 +193,7 @@ else()
 endif()
 
 # Arrow is C++17 and sets CMAKE_CXX_STANDARD while configuring. Restore ours
-# afterwards: gma is C++20, and so is the engine code compiled long after
+# afterwards: krn is C++20, and so is the engine code compiled long after
 # this file runs.
 set(_krn_saved_cxx_standard "${CMAKE_CXX_STANDARD}")
 

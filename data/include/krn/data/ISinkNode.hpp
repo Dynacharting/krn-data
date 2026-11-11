@@ -1,6 +1,6 @@
 #pragma once
 //
-// Sinks (gma -> history) — design sketch (ENC-1478, docs/data-layer.md §7).
+// Sinks (krn -> history) — design sketch (ENC-1478, docs/data-layer.md §7).
 // NOT IN THE BUILD. See data/README.md.
 //
 // OPTIONAL IN THE STRICT SENSE: no sink in a graph means no history dependency
@@ -9,7 +9,7 @@
 // THREE USES (docs §11):
 //
 //   * RESEARCH OUTPUT — the headless path. ReplaySource over L1 -> DAG ->
-//     SinkNode -> Arrow table. This is "gma as the query engine transforming
+//     SinkNode -> Arrow table. This is "krn as the query engine transforming
 //     tables", and it is the primary use.
 //   * RecordingSink — the parity instrument (bottom of this file).
 //   * DERIVED-SERIES PERSISTENCE, as an OPTIONAL CACHE. Note this is no longer
@@ -19,9 +19,9 @@
 //     persisted sma20 from a changed manifest is a wrong answer with a
 //     plausible shape (docs Q11).
 //
-// NEVER the raw path: raw durability is the ingest job's, upstream of gma, and
-// gma owning it is what docs §4 rule 3 forbids. A SinkNode writing raw ticks
-// would make a gma crash a data-loss event.
+// NEVER the raw path: raw durability is the ingest job's, upstream of krn, and
+// krn owning it is what docs §4 rule 3 forbids. A SinkNode writing raw ticks
+// would make a krn crash a data-loss event.
 //
 
 #include <cstdint>

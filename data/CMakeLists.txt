@@ -81,7 +81,7 @@ message(STATUS "krn_data: enabled (Arrow: ${KRN_DATA_ARROW_PROVENANCE})")
 # to a live ClickHouse, and a test that SKIPS when the server is absent looks
 # exactly like a test that passed -- the ENC-1095 failure, where three sessions
 # read a green 188/188 as renderer coverage. So the logic that can be wrong
-# (the gma.ingest_windows read rule, the CSV parse, the window arithmetic) is
+# (the krn.ingest_windows read rule, the CSV parse, the window arithmetic) is
 # unit-tested in krn_data_tests with no server at all, and the live exercise is
 # this binary, whose exit code is the verdict: 0 clean, 1 a finding, 2 COULD
 # NOT RUN. A missing server exits 2 and cannot be mistaken for a pass.
@@ -104,6 +104,69 @@ if (KRN_DATA_BUILD_BENCHMARKS)
   target_link_libraries(krn_b2_bench PRIVATE krn_data)
   krn_apply_warnings(krn_b2_bench)
   message(STATUS "krn-data: KRN_DATA_BUILD_BENCHMARKS=ON, krn_b2_bench enabled")
+endif()
+
+# ---------------------------------------------------------------------------
+# krn_b1_transport -- benchmark B1 (ENC-1485), behind KRN_DATA_BUILD_BENCHMARKS.
+# ---------------------------------------------------------------------------
+# Rows/sec ClickHouse -> this process, transport only: native protocol
+# (clickhouse-cpp) vs HTTP `FORMAT ArrowStream` (Boost.Beast, already in the
+# build through krn_engine, decoded by the fetched Arrow's IPC module). Not a
+# ctest case, for krn_ingest's reason: it needs a live server. Driven by
+# data/bench/b1.sh, which pins cores and reads the D13 caps back.
+#
+# THE DEPENDENCY DECISION. Nothing already vendored or fetched speaks the
+# native protocol: Arrow has no ClickHouse reader, Boost has no ClickHouse
+# client, and a hand-rolled native client would be a second, untested
+# implementation of a binary protocol whose speed is the thing being measured.
+# clickhouse-cpp is ClickHouse's own C++ client, Apache-2.0, pinned here by
+# commit (v2.6.2) like googletest. It is fetched ONLY under this option and is
+# linked ONLY into this executable -- never into krn_data, so neither
+# krn_data's consumers nor the engine acquire it (SPEC D14; the engine's
+# check_engine_isolation.py refuses `clickhouse/` includes in engine code).
+# WITH_OPENSSL stays OFF (loopback, no TLS).
+#
+# LZ4 IS ARROW'S, NOT A SECOND COPY. With the IPC codecs on (the default),
+# Arrow's own FetchContent of lz4 already defines a target named `lz4`, and
+# clickhouse-cpp's bundled contrib/lz4 dies on CMP0002 trying to define the
+# same name. So clickhouse-cpp is pointed at the lz4 this build already has:
+# WITH_SYSTEM_LZ4=ON, with `lz4::lz4` pre-defined as an alias of Arrow's
+# `lz4_static` (its Findlz4.cmake keeps an existing `lz4::lz4`). One lz4 in the
+# binary, not two archives racing for the same symbols. absl int128, cityhash
+# and zstd come from clickhouse-cpp's contrib as shipped.
+if (KRN_DATA_BUILD_BENCHMARKS)
+  include(FetchContent)
+  set(BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+  set(BUILD_TESTS     OFF CACHE BOOL "" FORCE)
+  set(WITH_OPENSSL    OFF CACHE BOOL "" FORCE)
+  set(DEBUG_DEPENDENCIES OFF CACHE BOOL "" FORCE)
+  if (TARGET lz4_static)
+    FetchContent_GetProperties(lz4 SOURCE_DIR _kd_lz4_src)
+    if (NOT EXISTS "${_kd_lz4_src}/lib/lz4.h")
+      message(FATAL_ERROR "krn-data: Arrow's lz4 has no lib/lz4.h under '${_kd_lz4_src}'")
+    endif()
+    add_library(lz4::lz4 ALIAS lz4_static)
+    set(WITH_SYSTEM_LZ4 ON CACHE BOOL "" FORCE)
+    set(lz4_INCLUDE_DIR "${_kd_lz4_src}/lib" CACHE PATH "" FORCE)
+    set(lz4_LIBRARY lz4_static CACHE STRING "" FORCE)
+    message(STATUS "krn-data: clickhouse-cpp uses Arrow's lz4 (${_kd_lz4_src})")
+  else()
+    set(WITH_SYSTEM_LZ4 OFF CACHE BOOL "" FORCE)
+  endif()
+  FetchContent_Declare(clickhouse_cpp
+    GIT_REPOSITORY https://github.com/ClickHouse/clickhouse-cpp.git
+    GIT_TAG        001025cd72d904104c15657e85e0fb6b0ec58e14  # v2.6.2
+  )
+  FetchContent_MakeAvailable(clickhouse_cpp)
+
+  add_executable(krn_b1_transport "${CMAKE_CURRENT_SOURCE_DIR}/bench/b1_transport_main.cpp")
+  # clickhouse-cpp's headers through SYSTEM, so its warnings are not ours.
+  get_target_property(_kd_chcpp_inc clickhouse-cpp-lib INTERFACE_INCLUDE_DIRECTORIES)
+  target_include_directories(krn_b1_transport SYSTEM PRIVATE ${_kd_chcpp_inc})
+  target_link_libraries(krn_b1_transport PRIVATE krn_data clickhouse-cpp-lib ${CMAKE_DL_LIBS})
+  krn_apply_warnings(krn_b1_transport)
+  message(STATUS "krn-data: KRN_DATA_BUILD_BENCHMARKS=ON, krn_b1_transport enabled "
+                 "(clickhouse-cpp v2.6.2 @ 001025cd)")
 endif()
 
 # ---------------------------------------------------------------------------

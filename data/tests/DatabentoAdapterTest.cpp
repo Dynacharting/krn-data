@@ -595,16 +595,16 @@ TEST(DbnActionMappingTest, EveryDeclaredSideIsAccepted) {
     switch (s) {
       case dbn::Side::Bid:
         EXPECT_EQ(r.side, Side::Bid);
-        EXPECT_EQ(r.flags & kGmaFlagSideUnspecified, 0);
+        EXPECT_EQ(r.flags & kKrnFlagSideUnspecified, 0);
         break;
       case dbn::Side::Ask:
         EXPECT_EQ(r.side, Side::Ask);
-        EXPECT_EQ(r.flags & kGmaFlagSideUnspecified, 0);
+        EXPECT_EQ(r.flags & kKrnFlagSideUnspecified, 0);
         break;
       case dbn::Side::None:
         // data::Side has no third value, so the gap is flagged rather than
         // flattened onto Bid without a trace.
-        EXPECT_NE(r.flags & kGmaFlagSideUnspecified, 0);
+        EXPECT_NE(r.flags & kKrnFlagSideUnspecified, 0);
         EXPECT_EQ(h.a->stats().sideUnspecified, 1u);
         break;
     }
