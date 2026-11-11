@@ -37,7 +37,7 @@
 //     Dispatcher (krn-common `connectors/market/src/ws/WsFeedClient.cpp`).
 //     The book's consumer is `OrderBookManager` (docs §4: `onRecord ─▶
 //     OrderBookManager`), which is the market connector's and not krn-data's
-//     to link (D9, amended). Top-of-book is derived from the reconstructed
+//     to link (purity SPEC D9, amended). Top-of-book is derived from the reconstructed
 //     book, not carried per row (docs §8.4, "`ob.*` being pipeline-only").
 //     Exposing an Add's price as `price` would write resting-order prices
 //     into the same `(symbol, "price")` atomic and history a trade writes:
