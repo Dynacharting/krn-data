@@ -66,6 +66,8 @@
 #include "krn/Event.hpp"
 #include "krn/FunctionMap.hpp"
 #include "krn/StreamValue.hpp"
+#include "krn/data/BookRecord.hpp"
+#include "krn/data/BookRecordFieldSource.hpp"
 #include "krn/data/RecordFieldSource.hpp"
 #include "krn/FunctionRegistry.hpp"
 #include "krn/engine/SymbolTable.hpp"
@@ -1242,4 +1244,317 @@ TEST(RecordIngressParityTest, DuplicateJsonMembersAreAPreExistingJsonOnlyQuirk) 
   std::set<std::string> unique(names.begin(), names.end());
   EXPECT_EQ(unique.size(), names.size())
       << "RecordFieldSource emitted a duplicate field name";
+}
+
+// ===========================================================================
+// 5. BOOKRECORDS (ENC-1628) — onRecord over an mbo row
+// ===========================================================================
+//
+// The same three-sense parity as section 1, over a mixed mbo corpus: every
+// row, mutation and print alike, goes through `onRecord(BookRecordFieldSource)`
+// on one rig and through `onTick` with the Event DERIVED from that source on
+// the other. A mutation's derived Event is `{}`; a print's carries `price` and
+// `size`. The field set itself is a decision documented in
+// data/include/krn/data/BookRecordFieldSource.hpp and pinned absolutely in
+// `BookRecordFieldSourceMappingTest` below, because a derived comparison cannot
+// see a mapping change (section 4's measured note applies unchanged).
+
+namespace {
+
+data::BookRecord makeBook(data::SymbolId sym, data::BookAction action,
+                          data::Side side, double price, std::uint64_t size,
+                          std::uint64_t orderId) {
+  data::BookRecord r;
+  r.header.symbolId    = sym;
+  r.header.venueId     = 7;
+  r.header.tsEventNs   = 1'700'000'000'000'000'000LL;
+  r.header.tsRecvNs    = 1'700'000'000'000'000'123LL;
+  r.header.providerSeq = 42;
+  r.header.sessionId   = 3;
+  r.action   = action;
+  r.side     = side;
+  r.price    = data::toFixed(price);
+  r.size     = size;
+  r.orderId  = orderId;
+  r.priority = 1000 + orderId;
+  r.epoch    = 1;
+  r.flags    = 130;
+  return r;
+}
+
+// The shape of the real sample (752 mutations, 248 prints of 1000 rows),
+// shortened: mutations interleaved with six prints, so the reference
+// computer gets past its warm-up (kWarmupTicks + 2 samples) on prints alone,
+// and every BookAction appears at least once.
+std::vector<data::BookRecord> bookCorpus(data::SymbolId sym) {
+  using A = data::BookAction;
+  using S = data::Side;
+  return {
+      makeBook(sym, A::Clear,    S::Bid, 0.0,     0, 0),
+      makeBook(sym, A::TickSize, S::Bid, 0.01,    0, 0),
+      makeBook(sym, A::Add,      S::Bid, 265.70, 100, 1),
+      makeBook(sym, A::Add,      S::Ask, 265.80, 200, 2),
+      makeBook(sym, A::Trade,    S::Ask, 265.76,  14, 0),
+      makeBook(sym, A::Update,   S::Bid, 265.70,  60, 1),
+      makeBook(sym, A::Trade,    S::Bid, 265.80,  40, 2),
+      makeBook(sym, A::Delete,   S::Ask, 265.80, 160, 2),
+      makeBook(sym, A::Trade,    S::Ask, 265.70,  60, 1),
+      makeBook(sym, A::Add,      S::Ask, 265.75, 300, 3),
+      makeBook(sym, A::Trade,    S::Bid, 265.75,   1, 3),
+      makeBook(sym, A::Trade,    S::Bid, 265.75, 299, 3),
+      makeBook(sym, A::Delete,   S::Ask, 265.75, 300, 3),
+      makeBook(sym, A::Trade,    S::Ask, 265.69,   5, 0),
+  };
+}
+
+// THE RECORD ENTRY POINT for an mbo row.
+void feedBook(Dispatcher& disp, const data::BookRecord& rec) {
+  const engine::BookRecordFieldSource fields(rec);
+  disp.onRecord(rec.header.symbolId, fields);
+}
+
+// THE EQUIVALENT TICK, derived through BookRecordFieldSource itself.
+Event equivalentBookEvent(const std::string& symbol, const data::BookRecord& rec) {
+  auto doc = std::make_shared<rapidjson::Document>();
+  doc->SetObject();
+  struct AddMembers final : engine::NumericFieldSink {
+    rapidjson::Document* doc;
+    void field(const std::string& name, double value) override {
+      auto& alloc = doc->GetAllocator();
+      doc->AddMember(rapidjson::Value(name.c_str(),
+                                      static_cast<rapidjson::SizeType>(name.size()),
+                                      alloc),
+                     rapidjson::Value(value), alloc);
+    }
+  } add;
+  add.doc = doc.get();
+  engine::BookRecordFieldSource(rec).forEachNumber(add);
+  return Event{symbol, std::move(doc)};
+}
+
+// The TickRecord a `trades` row of the same execution decodes to: a print,
+// no quote. What an mbo print is claimed to mirror.
+data::TickRecord tradeTickOf(const data::BookRecord& b) {
+  data::TickRecord t;
+  t.header      = b.header;
+  t.kind        = data::RecordKind::Trade;
+  t.price       = b.price;
+  t.size        = b.size;
+  t.bookNeutral = true;
+  return t;
+}
+
+enum class BookPath { Json, Record, TradeTickRecord };
+
+Observed driveBook(BookPath path, const util::Config& cfg,
+                   void (*mutate)(data::BookRecord&) = nullptr,
+                   bool printsOnly = false) {
+  Rig rig(cfg);
+  auto recs = bookCorpus(rig.symbolId);
+  for (auto& rec : recs) {
+    if (printsOnly && rec.action != data::BookAction::Trade) continue;
+    if (mutate) mutate(rec);
+    switch (path) {
+      case BookPath::Record: feedBook(rig.disp, rec); break;
+      case BookPath::Json:   rig.disp.onTick(equivalentBookEvent(kTicker, rec)); break;
+      case BookPath::TradeTickRecord: feedRecord(rig.disp, tradeTickOf(rec)); break;
+    }
+  }
+  rig.quiesce();
+
+  Observed o;
+  o.deliveries = rig.log.rows();
+  o.store      = dumpStore(rig.store);
+  o.computers  = rig.computerLog;
+  return o;
+}
+
+bool hasRowStartingWith(const std::vector<std::string>& rows, const std::string& prefix) {
+  for (const auto& r : rows) if (r.rfind(prefix, 0) == 0) return true;
+  return false;
+}
+
+}  // namespace
+
+TEST(BookRecordIngressParityTest, DeliveriesAreIdenticalInOrder) {
+  const auto cfg = defaultCfg();
+  const Observed json = driveBook(BookPath::Json, cfg);
+  const Observed rec  = driveBook(BookPath::Record, cfg);
+
+  // Anti-vacuity, by route: the raw fields, a subscribed builtin and the
+  // computer-pushed key must each have delivered.
+  for (const char* label : {"price |", "size |", "mean |", "reference.sum |"}) {
+    EXPECT_TRUE(hasRowStartingWith(json.deliveries, label))
+        << "the JSON path delivered no `" << label << "` row — vacuous";
+  }
+  EXPECT_EQ(json.deliveries, rec.deliveries);
+}
+
+TEST(BookRecordIngressParityTest, AtomicStoreContentsAreIdentical) {
+  const auto cfg = defaultCfg();
+  const Observed json = driveBook(BookPath::Json, cfg);
+  const Observed rec  = driveBook(BookPath::Record, cfg);
+
+  for (const char* key : {"price", "size", "mean", "sum", "stddev"}) {
+    const std::string at = std::string(kTicker) + " / " + key + " = ";
+    EXPECT_TRUE(hasRowStartingWith(json.store, at)) << "JSON path wrote no `" << key << "`";
+    EXPECT_TRUE(hasRowStartingWith(rec.store, at)) << "record path wrote no `" << key << "`";
+  }
+  for (const auto key : {ReferenceComputer::kSumKey, ReferenceComputer::kSumSqKey}) {
+    const std::string at = std::string(kTicker) + " / " + std::string(key) + " = d:";
+    bool finite = false;
+    for (const auto& r : rec.store)
+      if (r.rfind(at, 0) == 0) finite = r.find("nan") == std::string::npos;
+    EXPECT_TRUE(finite) << "record path wrote no finite `" << key << "` — the "
+                           "reference computer never got past warm-up";
+  }
+  // No book identity leaks into the store under any name.
+  for (const auto& r : rec.store) {
+    for (const char* leak : {"orderId", "priority", "epoch", "side", "action", "depth"}) {
+      EXPECT_EQ(r.find(std::string(" / ") + leak + " = "), std::string::npos) << r;
+    }
+  }
+  EXPECT_EQ(json.store, rec.store);
+}
+
+TEST(BookRecordIngressParityTest, ComputerInvocationsAreIdenticalAndOnePerRow) {
+  const auto cfg = defaultCfg();
+  const Observed json = driveBook(BookPath::Json, cfg);
+  const Observed rec  = driveBook(BookPath::Record, cfg);
+
+  // ONE PER ROW, mutations included: a fieldless row still reaches the "tick"
+  // computers on both paths (see the header's "what a fieldless row does").
+  ASSERT_EQ(json.computers.size(), bookCorpus(1).size());
+  EXPECT_EQ(json.computers, rec.computers);
+
+  std::size_t empty = 0;
+  for (const auto& c : rec.computers) if (c.find("fields={}") != std::string::npos) ++empty;
+  EXPECT_EQ(empty, 8u) << "the corpus has 8 mutations; each must reach the computer fieldless";
+}
+
+TEST(BookRecordIngressParityTest, APrintIsTheTradeTickItMirrors) {
+  // An mbo print and the `trades` row of the same execution expose the same
+  // fields, so the two halves of the sample land on one vocabulary. Asserted
+  // two ways: the flattened field sets, and the engine's whole response.
+  Rig rig(defaultCfg());
+  std::size_t prints = 0;
+  for (const auto& b : bookCorpus(rig.symbolId)) {
+    if (b.action != data::BookAction::Trade) continue;
+    ++prints;
+    EXPECT_EQ(flatten(engine::BookRecordFieldSource(b)),
+              flatten(engine::RecordFieldSource(tradeTickOf(b))));
+  }
+  ASSERT_EQ(prints, 6u);
+
+  const auto cfg = defaultCfg();
+  const Observed book = driveBook(BookPath::Record, cfg, nullptr, /*printsOnly=*/true);
+  const Observed tick = driveBook(BookPath::TradeTickRecord, cfg, nullptr, /*printsOnly=*/true);
+  ASSERT_FALSE(book.deliveries.empty());
+  EXPECT_EQ(book.deliveries, tick.deliveries);
+  EXPECT_EQ(book.store, tick.store);
+  EXPECT_EQ(book.computers, tick.computers);
+}
+
+// NEGATIVE CONTROLS — the same comparator, shown to see a BookRecord divergence.
+
+TEST(BookRecordIngressParityTest, ComparatorSeesAPrintValueDivergence) {
+  const auto cfg = defaultCfg();
+  const Observed json = driveBook(BookPath::Json, cfg);
+  const Observed rec  = driveBook(BookPath::Record, cfg, [](data::BookRecord& r) {
+    if (r.action == data::BookAction::Trade) r.price += 1;   // one unit at 1e-9
+  });
+  EXPECT_NE(json.deliveries, rec.deliveries);
+  EXPECT_NE(json.store, rec.store);
+  EXPECT_NE(json.computers, rec.computers);
+}
+
+TEST(BookRecordIngressParityTest, ComparatorSeesAMutationLeakingAField) {
+  // One Add relabelled a print on the record path only: its resting price
+  // reaches `price`, the failure the mapping exists to prevent.
+  const auto cfg = defaultCfg();
+  const Observed json = driveBook(BookPath::Json, cfg);
+  const Observed rec  = driveBook(BookPath::Record, cfg, [](data::BookRecord& r) {
+    if (r.action == data::BookAction::Add && r.orderId == 1) r.action = data::BookAction::Trade;
+  });
+  EXPECT_NE(json.deliveries, rec.deliveries);
+  EXPECT_NE(json.store, rec.store);
+  EXPECT_NE(json.computers, rec.computers);
+}
+
+TEST(RecordPathIsJsonFreeTest, BookRecordFieldSourceHeaderNamesNoJson) {
+  const std::string book = readSource("data/include/krn/data/BookRecordFieldSource.hpp");
+  const std::string jsn  = readSource("include/krn/engine/JsonFieldSource.hpp");
+  ASSERT_FALSE(book.empty());
+  ASSERT_FALSE(jsn.empty());
+  EXPECT_FALSE(jsonTokensIn(scrubComments(jsn)).empty())
+      << "JsonFieldSource.hpp names no JSON token — the check is broken";
+  const auto found = jsonTokensIn(scrubComments(book));
+  EXPECT_TRUE(found.empty())
+      << "BookRecordFieldSource.hpp names a JSON type: "
+      << (found.empty() ? std::string{} : found[0]);
+}
+
+// THE MAPPING, PINNED ABSOLUTELY against literals.
+
+TEST(BookRecordFieldSourceMappingTest, APrintExposesPriceThenSize) {
+  const auto b = makeBook(1, data::BookAction::Trade, data::Side::Ask, 265.76, 14, 0);
+  const engine::BookRecordFieldSource src(b);
+  EXPECT_EQ(flatten(src), "price=265.75999999999999;size=14;");
+  EXPECT_EQ(src.fieldCountHint(), 2u);
+  EXPECT_TRUE(src.isObject());
+}
+
+TEST(BookRecordFieldSourceMappingTest, EveryMutationExposesNothing) {
+  for (const auto action : {data::BookAction::Add, data::BookAction::Update,
+                            data::BookAction::Delete, data::BookAction::TickSize,
+                            data::BookAction::Clear}) {
+    const auto b = makeBook(1, action, data::Side::Bid, 265.70, 100, 9);
+    const engine::BookRecordFieldSource src(b);
+    EXPECT_EQ(flatten(src), "") << "action " << static_cast<int>(action);
+    EXPECT_EQ(src.fieldCountHint(), 0u) << "action " << static_cast<int>(action);
+    EXPECT_TRUE(src.isObject()) << "a mutation is {} on the JSON path, not a non-object";
+    EXPECT_FALSE(src.has("price"));
+    EXPECT_FALSE(src.has("size"));
+  }
+}
+
+TEST(BookRecordFieldSourceMappingTest, AbsentPriceAndZeroSizeAreOmittedNotZeroed) {
+  auto b = makeBook(1, data::BookAction::Trade, data::Side::Bid, 1.0, 0, 0);
+  EXPECT_EQ(flatten(engine::BookRecordFieldSource(b)), "price=1;");
+  b.price = data::kNoPrice;
+  b.size  = 7;
+  EXPECT_EQ(flatten(engine::BookRecordFieldSource(b)), "size=7;");
+  b.size = 0;
+  EXPECT_EQ(flatten(engine::BookRecordFieldSource(b)), "");
+}
+
+TEST(BookRecordFieldSourceMappingTest, BookIdentityAndHeaderDoNotReachTheFields) {
+  const auto base = makeBook(1, data::BookAction::Trade, data::Side::Bid, 2.5, 3, 4);
+  const std::string want = flatten(engine::BookRecordFieldSource(base));
+  auto b = base;
+  b.side = data::Side::Ask;  b.orderId = 77; b.priority = 1; b.depth = 5;
+  b.epoch = 9; b.flags = 0xffff;
+  b.header.tsEventNs = 1; b.header.tsRecvNs = 2; b.header.providerSeq = 3;
+  b.header.sessionId = 4; b.header.venueId = 5; b.header.instrumentId = 6;
+  EXPECT_EQ(flatten(engine::BookRecordFieldSource(b)), want);
+}
+
+TEST(BookRecordFieldSourceMappingTest, LookupAgreesWithEmissionAndNoUint64) {
+  const auto b = makeBook(1, data::BookAction::Trade, data::Side::Bid, 5.0, 2, 0);
+  const engine::BookRecordFieldSource src(b);
+  double d = -1.0;
+  ASSERT_TRUE(src.tryGetNumber("price", d));
+  EXPECT_EQ(d, 5.0);
+  ASSERT_TRUE(src.tryGetNumber("size", d));
+  EXPECT_EQ(d, 2.0);
+  for (const auto& n : {std::string("bid"), std::string("side"), std::string("orderId")}) {
+    d = -1.0;
+    EXPECT_FALSE(src.has(n)) << n;
+    EXPECT_FALSE(src.tryGetNumber(n, d)) << n;
+    EXPECT_EQ(d, -1.0) << "out param must be untouched on a miss";
+  }
+  for (const auto& n : {std::string("price"), std::string("size")}) {
+    std::uint64_t u = 0;
+    EXPECT_FALSE(src.tryGetUint64(n, u)) << n;
+  }
 }
