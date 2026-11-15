@@ -202,6 +202,26 @@ arrow::Result<csv::RetentionResult> retainOnlyIfDecodable(
     const std::string& path, const std::vector<std::byte>& bytes);
 
 // ---------------------------------------------------------------------------
+// Which recorded windows a DROP PARTITION invalidates (§8.6, ENC-1635).
+// ---------------------------------------------------------------------------
+//
+// `intersecting` is every distinct recorded window of one kind, any symbol,
+// that intersects a day partition about to be dropped. The result is the
+// windows that get a state=3 row before the drop. A named function rather
+// than a SQL predicate, so the selection is unit-testable without a
+// ClickHouse (`IngestWindowsInvalidation` in data/tests/IngestWindowsTest.cpp).
+struct RecordedWindow {
+  std::string  symbol;
+  std::int64_t fromTsNs = 0;
+  std::int64_t toTsNs   = 0;  // half-open
+  bool operator==(const RecordedWindow&) const = default;
+};
+
+std::vector<RecordedWindow> invalidationTargets(
+    const std::vector<RecordedWindow>& intersecting,
+    const std::string& ownSymbol, std::int64_t ownFromNs, std::int64_t ownToNs);
+
+// ---------------------------------------------------------------------------
 // Run it.
 // ---------------------------------------------------------------------------
 //

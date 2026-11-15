@@ -628,10 +628,12 @@ What the job does, in order (`data/src/IngestJob.cpp`, pass 2):
    refusal it raises fires before pass 2 starts.
 2. It collects the days to drop: the days the recorded window spans plus the day of every
    decoded row.
-3. **For every other symbol** with a recorded window of the same kind that intersects one of
-   those days, it writes a `state = 3` (invalidated) row with `source_ref` "invalidated by
-   DROP PARTITION <day> for <symbol>". A malformed row in that lookup is a refusal, never a
-   skip. At that point nothing has been dropped for the current kind, but kinds run in order
+3. **For every other recorded window** of the same kind that intersects one of those days,
+   whatever its symbol, it writes a `state = 3` (invalidated) row with `source_ref`
+   "invalidated by DROP PARTITION <day> for <symbol>". That includes the re-ingesting
+   symbol's own other windows on the day (ENC-1635); only the window being written is left
+   out, because step 4 covers it. `ingest::invalidationTargets` makes the selection. A
+   malformed row in that lookup is a refusal, never a skip. At that point nothing has been dropped for the current kind, but kinds run in order
    (`trades` first), so a refusal during `book_events` comes after `trades` has already been
    dropped and reloaded.
 4. It writes `state = 0` (in flight) for its own recorded window.
@@ -641,16 +643,21 @@ What the job does, in order (`data/src/IngestJob.cpp`, pass 2):
    sent. A failed symbology insert returns with the window still at `state = 0`, which reads
    as not ingested.
 
-**What that order does not cover, stated plainly:**
+**Why `state = 3` for the symbol's own other windows, and not a re-recorded `state = 1`.**
+The job reloads one retained DBN, so only that window's rows come back. A fresh `state = 1`
+on another window would claim rows nobody reinserted: the §8.4 failure, written by the
+repair. Under the read rule (§8.8), `state = 3` costs no request that the reloaded rows can
+answer. A request inside the reloaded window's range is still covered, through that window,
+by the union of surviving windows. Any other part of the invalidated window fails until that
+window's own DBN is reloaded, including a part on a day that was not dropped (a window
+spanning two days is voided whole): over-refusal, never a wrong answer. Restoring it is a
+re-run of that window, not something this job infers.
+`IngestWindowsInvalidation` in `data/tests/IngestWindowsTest.cpp` replays the pass-2 writes
+through `isComplete` for both cases and for another symbol's window.
 
-- **The symbol's own other windows.** Step 3 selects `symbol != <this symbol>`, and step 4
-  covers only the window being written. A recorded window of the *same* symbol and kind with
-  a different `(from_ts, to_ts)` on a dropped day gets no new row, so its newest row can stay
-  `state = 1` over rows step 5 deleted. Only the rows this pull reloads come back.
-- **A `DROP PARTITION` typed at the server** bypasses all of it. ENC-1483 measured that
-  `isComplete` then returns complete over an empty table.
-
-In both cases `krn_ingest verify`'s refutation check (§8.8) reports it when the window is
+**What that order does not cover, stated plainly:** a `DROP PARTITION` typed at the server
+bypasses all of it. ENC-1483 measured that `isComplete` then returns complete over an empty
+table. `krn_ingest verify`'s refutation check (§8.8) reports it when the window is
 left with zero rows, and only for the `--symbol` it is run for. It cannot see a window that
 is only partly emptied.
 
@@ -783,7 +790,7 @@ state change of one window, never an update in place.
 | column | what the job writes (`writeWindowRow`, `data/src/IngestJob.cpp`) |
 |---|---|
 | `symbol`, `kind`, `from_ts`, `to_ts` | the recorded window, half-open `[from_ts, to_ts)`. The job writes `kind` as `trades` or `book_events` |
-| `state` | `0` in flight, `1` complete, `2` failed, `3` invalidated by another symbol's `DROP PARTITION` (§8.6) |
+| `state` | `0` in flight, `1` complete, `2` failed, `3` invalidated by a `DROP PARTITION` for another window, of any symbol (§8.6) |
 | `updated_at` | a **write** clock: `now64(3)` on **every** row, `state = 0` included. The DDL adds `DEFAULT now64(3)` as a backstop, because a column with no default stores epoch 0 when an insert omits it |
 | `completed_at` | `now64(3)` on the `state = 1` row, epoch 0 on every other row. **Never used to order rows** |
 | `rows_inserted` | rows sent, on the `state = 1` row. Diagnostics only |
@@ -887,7 +894,8 @@ Where each input comes from:
   differs from `ingest`**, which takes the last CSV record's `ts_event`. An `mbo` record with
   action `N` yields no canonical row, so on a truncated `mbo` pull ending in such records a
   reload records a smaller `to_ts` than the ingest did. That is a different recorded window,
-  and the original one gets no new row (§8.6). No test drives the reload path.
+  and the original one, which intersects the dropped day, gets a `state = 3` row (§8.6). No
+  test drives the reload path.
 
 The truncation tests, all on the CSV path, are `RecordsEqualToTheLimitMeansThePullWasCut`,
 `FewerRecordsThanTheLimitClaimsTheWholeRequest`, `NoLimitIsNeverTruncated` and
