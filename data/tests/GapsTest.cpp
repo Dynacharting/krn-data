@@ -168,8 +168,12 @@ TEST(GapsRealSample, ZeroRowsAreWrittenWhereANaiveDetectorWouldWrite1044) {
     EXPECT_EQ(k.gapRowsWritten, 0u);
     EXPECT_EQ(k.gapMaybeBadBook, 0u);
     EXPECT_EQ(k.canonicalRows, 1000u);
-    if (k.kind == "trades") EXPECT_EQ(k.gapNaiveSeqJumps, 610u);
-    if (k.kind == "book_events") EXPECT_EQ(k.gapNaiveSeqJumps, 434u);
+    if (k.kind == "trades") {
+      EXPECT_EQ(k.gapNaiveSeqJumps, 610u);
+    } else {
+      EXPECT_EQ(k.kind, "book_events");
+      EXPECT_EQ(k.gapNaiveSeqJumps, 434u);
+    }
     naive += k.gapNaiveSeqJumps;
   }
   // Non-vacuity: the refusal is only meaningful where there was something to
