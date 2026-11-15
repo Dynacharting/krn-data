@@ -380,6 +380,21 @@ std::string formatWindow(std::int64_t fromNs, std::int64_t toNs) {
 }
 
 // ===========================================================================
+// Which recorded windows a DROP PARTITION invalidates (§8.6)
+// ===========================================================================
+
+std::vector<RecordedWindow> invalidationTargets(
+    const std::vector<RecordedWindow>& intersecting,
+    const std::string& ownSymbol, std::int64_t /*ownFromNs*/,
+    std::int64_t /*ownToNs*/) {
+  std::vector<RecordedWindow> out;
+  for (const auto& w : intersecting) {
+    if (w.symbol != ownSymbol) out.push_back(w);
+  }
+  return out;
+}
+
+// ===========================================================================
 // The completeness read (D11)
 // ===========================================================================
 
@@ -878,41 +893,48 @@ arrow::Result<Report> run(const Options& opts) {
       std::ostringstream q;
       q << "SELECT DISTINCT symbol, toUnixTimestamp64Nano(from_ts), "
            "toUnixTimestamp64Nano(to_ts) FROM krn.ingest_windows WHERE kind = "
-        << ch::sqlQuote(st.rep.kind) << " AND symbol != "
-        << ch::sqlQuote(st.rep.symbol)
+        << ch::sqlQuote(st.rep.kind)
         << " AND from_ts < fromUnixTimestamp64Nano(toInt64(" << dayTo
         << "), 'UTC') AND to_ts > fromUnixTimestamp64Nano(toInt64(" << dayFrom
         << "), 'UTC') FORMAT TabSeparated";
-      ARROW_ASSIGN_OR_RAISE(const auto others, client.select(q.str()));
-      for (const auto& r : others) {
+      ARROW_ASSIGN_OR_RAISE(const auto found, client.select(q.str()));
+      std::vector<RecordedWindow> intersecting;
+      intersecting.reserve(found.size());
+      for (const auto& r : found) {
         // ⚠ CODE-REVIEW FINDING #6. This was `if (r.size() != 3) continue;` —
         // a SILENT SKIP, inside the block whose entire stated purpose is
         // preventing `isComplete` from returning true over an emptied
-        // partition. Skipping a row here means some other symbol keeps a
-        // `state=1` row over data this loop is about to drop, which is the
-        // exact failure the block exists to prevent, reached by the code meant
-        // to prevent it. It refuses now.
+        // partition. Skipping a row here means some window keeps a `state=1`
+        // row over data this loop is about to drop, which is the exact failure
+        // the block exists to prevent, reached by the code meant to prevent
+        // it. It refuses now.
         if (r.size() != 3) {
           return arrow::Status::Invalid(
               "a krn.ingest_windows row came back with ", r.size(),
-              " field(s) instead of 3 while collecting the other symbols whose "
-              "completeness this DROP PARTITION invalidates. Refusing rather "
-              "than skipping: a skipped row leaves another symbol asserting "
+              " field(s) instead of 3 while collecting the recorded windows "
+              "whose completeness this DROP PARTITION invalidates. Refusing "
+              "rather than skipping: a skipped row leaves a window asserting "
               "state=1 over a partition about to be emptied. Nothing has been "
               "dropped yet.");
         }
-        std::int64_t otherFrom = 0;
-        std::int64_t otherTo   = 0;
-        if (!parseExact(r[1], otherFrom)) return badField("from_ts", r[1]);
-        if (!parseExact(r[2], otherTo)) return badField("to_ts", r[2]);
+        RecordedWindow w;
+        w.symbol = r[0];
+        if (!parseExact(r[1], w.fromTsNs)) return badField("from_ts", r[1]);
+        if (!parseExact(r[2], w.toTsNs)) return badField("to_ts", r[2]);
+        intersecting.push_back(std::move(w));
+      }
+      for (const auto& w : invalidationTargets(intersecting, st.rep.symbol,
+                                               st.rep.recordedFromNs,
+                                               st.rep.recordedToNs)) {
         ARROW_RETURN_NOT_OK(writeWindowRow(
-            client, r[0], st.rep.kind, otherFrom, otherTo,
+            client, w.symbol, st.rep.kind, w.fromTsNs, w.toTsNs,
             /*state=*/3, /*rowsInserted=*/0, st.sessionId,
             "invalidated by DROP PARTITION " + std::to_string(day) + " for " +
                 st.rep.symbol));
-        rep.invalidationRows.push_back(r[0] + "/" + st.rep.kind + " " + r[1] +
-                                       ".." + r[2] + " -> state=3 (partition " +
-                                       std::to_string(day) + ")");
+        rep.invalidationRows.push_back(
+            w.symbol + "/" + st.rep.kind + " " + std::to_string(w.fromTsNs) +
+            ".." + std::to_string(w.toTsNs) + " -> state=3 (partition " +
+            std::to_string(day) + ")");
       }
     }
 
