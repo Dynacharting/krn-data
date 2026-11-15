@@ -20,7 +20,7 @@ PullScope pullScope(const dbn::Metadata& md) {
   if (md.symbols.size() == 1 && md.symbols.front() == kAllSymbols) {
     return PullScope::AllSymbols;
   }
-  return PullScope::SymbolFiltered;
+  return PullScope::AllSymbols;
 }
 
 std::vector<SeqPoint> seqPoints(const std::vector<TickRecord>& ticks) {
