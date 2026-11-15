@@ -472,6 +472,15 @@ class DatabentoAdapter {
     std::uint64_t sideUnspecified= 0;   // DBN side 'N' on an mbo or trades record
     std::uint64_t undefPrice     = 0;   // kUndefPrice -> kNoPrice
     std::uint64_t undefSize      = 0;   // kUndefOrderSize seen
+    // ts_event of the LAST record framed (any declared rtype, the same
+    // population `recordsIn` counts), how many consecutive records end on it,
+    // and how many times ts_event went backwards. The reload's recorded window
+    // is computed from these (docs §8.8, ENC-1636), not from the canonical
+    // rows: an mbo action `N` record is delivered and counted by the vendor's
+    // `limit` but yields no row.
+    std::uint64_t lastTsEvent          = 0;
+    std::uint64_t recordsAtLastTsEvent = 0;
+    std::uint64_t tsEventDescents      = 0;
   };
 
   // `symbols` and `venues` are the tables the batches are encoded against and
