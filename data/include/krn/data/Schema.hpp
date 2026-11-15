@@ -121,7 +121,10 @@ inline constexpr std::string_view kL1Database = "krn";
 // A reader that meets an unknown version refuses the stream rather than
 // guessing a column layout.
 inline constexpr std::string_view kSchemaVersionKey = "krn.schema_version";
-inline constexpr std::int32_t     kSchemaVersion    = 1;
+//   1  ENC-1481.
+//   2  ENC-1494: `book_events` gains `aggressor`, `side` gains `None` (2), and
+//      `side` on a Trade row is the resting side rather than the aggressor's.
+inline constexpr std::int32_t     kSchemaVersion    = 2;
 
 // The version string carried in the metadata of every schema above, parsed
 // back out by `schemaVersionOf`. Returns -1 when the key is absent or

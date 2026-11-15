@@ -14,8 +14,17 @@
 
 namespace krn::data {
 
-// Mirrors krn::Side (connectors/market/include/krn/book/OrderBook.hpp).
-enum class Side : std::uint8_t { Bid = 0, Ask = 1 };
+// The resting side of the book. Bid and Ask mirror krn::Side
+// (connectors/market/include/krn/book/OrderBook.hpp) and keep its values.
+//
+// `None` is the third value DBN's own `Side` carries ("No side specified by the
+// original source", ENC-1494), and the market connector's `krn::Side` does not
+// have. It is normal on real data, not an edge case: on Databento XNAS.ITCH
+// MSFT 2022-06-10 it is 65 of 1000 mbo rows (every one a `T` print) and 546 of
+// 1000 trades rows. Before ENC-1494 it was spelled `Bid` plus a flag bit in
+// `flags`, so a reader that did not consult the flag saw a bid. A consumer that
+// places an order on the book must refuse `None` rather than pick a side.
+enum class Side : std::uint8_t { Bid = 0, Ask = 1, None = 2 };
 
 // Mirrors the krn::feed::FeedEvent variant set
 // (connectors/market/include/krn/feed/FeedEvent.hpp) one-for-one. That variant
@@ -34,10 +43,31 @@ enum class BookAction : std::uint8_t {
 // already exist (onAdd / onUpdate / onDelete / onTrade / setTickSize /
 // onReset), so the data layer drives that machinery rather than duplicating it
 // (docs/data-layer.md §4.6).
+//
+// ONE MEANING PER COLUMN (ENC-1494):
+//   * `side` is the RESTING side on every row: the order's side on a book
+//     mutation, and the passive side a print executed against on a `Trade`
+//     row. `Side::None` when the venue gave none.
+//   * `aggressor` is the taker, and only a `Trade` row has one; it is
+//     `Aggressor::Unknown` on every other action. It is the argument
+//     `OrderBookManager::onTrade(..., Aggressor)` takes.
+// Before ENC-1494 `side` held the resting side on a mutation and the aggressor
+// on a print, which is how ENC-1482's one real bug (a Fill's aggressor flip
+// leaking onto the mutation row it also emits) was possible at all.
+//
+// THE DEFAULT IS "NO SIDE", NOT A BID. A default-constructed BookRecord has
+// `side == Side::None` and `aggressor == Aggressor::Unknown`, so a field nobody
+// set cannot read as a plausible wrong value (the hazard ENC-1480 met with
+// `updated_at` defaulting to epoch 0). It is not made unrepresentable: `None`
+// is a legal value on real prints, so the default is "explicitly unknown",
+// which a book consumer has to refuse to place, rather than an invalid byte the
+// codec would refuse to store.
 struct BookRecord {
   RecordHeader  header;
-  BookAction    action   = BookAction::Add;
-  Side          side     = Side::Bid;
+  BookAction    action    = BookAction::Add;
+  Side          side      = Side::None;
+  // In the padding between `side` and `price`, so the struct stays 96 bytes.
+  Aggressor     aggressor = Aggressor::Unknown;
   std::int64_t  price    = kNoPrice;
   std::uint64_t size     = 0;
   std::uint64_t orderId  = 0;     // 0 == venue supplied none (OrderKey::idMissing)
@@ -50,7 +80,9 @@ struct BookRecord {
 // One level of a book snapshot. Snapshots are persisted on a cadence so a
 // replay of an arbitrary window can seek instead of rebuilding from session
 // open — with MBO, the alternative is replaying every order event from the
-// open, per research run (docs/data-layer.md §8.5).
+// open, per research run (docs/data-layer.md §8.5). A level is always on one
+// side, so the codec refuses `Side::None` here (Schema.cpp, kMaxLevelSideValue);
+// nothing produces snapshots yet, and this default is left as it was.
 struct SnapshotLevel {
   Side          side       = Side::Bid;
   std::int64_t  price      = kNoPrice;
@@ -71,7 +103,7 @@ struct SnapshotRecord {
 // Layout and enumerator values are part of the L1 contract (Schema.cpp casts
 // them; clickhouse.sql stores them). Pinned as measured before the move.
 static_assert(sizeof(Side) == 1 && static_cast<int>(Side::Bid) == 0 &&
-              static_cast<int>(Side::Ask) == 1);
+              static_cast<int>(Side::Ask) == 1 && static_cast<int>(Side::None) == 2);
 static_assert(sizeof(BookAction) == 1 &&
               static_cast<int>(BookAction::Add) == 0 &&
               static_cast<int>(BookAction::Update) == 1 &&
@@ -84,6 +116,7 @@ static_assert(sizeof(BookRecord) == 96 && alignof(BookRecord) == 8);
 static_assert(offsetof(BookRecord, header) == 0 &&
               offsetof(BookRecord, action) == 40 &&
               offsetof(BookRecord, side) == 41 &&
+              offsetof(BookRecord, aggressor) == 42 &&
               offsetof(BookRecord, price) == 48 &&
               offsetof(BookRecord, size) == 56 &&
               offsetof(BookRecord, orderId) == 64 &&
