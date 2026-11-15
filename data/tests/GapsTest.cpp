@@ -120,9 +120,11 @@ TEST(GapsInfer, MaybeBadBookIsCountedAndNeverBecomesARow) {
                               points({1, 2, 3}, dbn::kFlagMaybeBadBook));
   EXPECT_EQ(inf.vendorMaybeBadBook, 1u);
   EXPECT_TRUE(inf.rows.empty());
-  // Only the flags' low byte is DBN's; krn's own high-byte bit is not it.
+  // Only the flags' low byte is DBN's. 0x0100 is the high-byte bit krn set
+  // for DBN side 'N' until ENC-1494 retired it; an L1 loaded before then
+  // still holds it, and it is not the vendor's signal.
   const Inference krnBit = infer(metaWithSymbols({"MSFT"}),
-                                 points({1, 2}, kKrnFlagSideUnspecified));
+                                 points({1, 2}, std::uint16_t{0x0100}));
   EXPECT_EQ(krnBit.vendorMaybeBadBook, 0u);
 }
 

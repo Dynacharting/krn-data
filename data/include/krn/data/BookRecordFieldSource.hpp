@@ -60,9 +60,9 @@
 //     nanosecond epoch does not survive the engine's `double`.
 //   * `orderId`, `priority`, `depth`, `epoch`, `header.providerSeq` etc.:
 //     book identity and provenance, consumed by the book, not values.
-//   * `side`, `action`, `flags`: categorical. On a print `side` is the
-//     aggressor (DatabentoAdapter.cpp), which RecordFieldSource does not
-//     expose for a trade either.
+//   * `side`, `aggressor`, `action`, `flags`: categorical. A print's
+//     `aggressor` is the field RecordFieldSource does not expose for a trade
+//     either, so leaving both out keeps an mbo print and its trades row equal.
 //
 // WHAT A FIELDLESS ROW DOES. A mutation's source has `fieldCountHint() == 0`.
 // Handing it to `onRecord` is IDENTICAL to `onTick` with `{}` — parity holds,

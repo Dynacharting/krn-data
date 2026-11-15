@@ -730,53 +730,65 @@ arrow::Status DatabentoAdapter::onMbo(const dbn::MboMsg& m) {
     ++stats_.undefSize;
   }
 
-  std::uint16_t flags = m.flags;
+  const std::uint16_t flags = m.flags;
   const auto side = static_cast<dbn::Side>(m.side);
 
-  // `BookRecord::side` holds TWO MEANINGS, and keeping them apart is the
+  // TWO COLUMNS, ONE MEANING EACH (ENC-1494), and keeping them apart is the
   // subtle part of this function.
   //
-  //   * On Add / Cancel / Modify / Clear it is the RESTING order's side, which
-  //     is what DBN reports and what `OrderBookManager::onAdd/onUpdate` want.
-  //   * On a `BookAction::Trade` row it is the AGGRESSOR's side, because that
-  //     row drives `OrderBookManager::onTrade(..., Aggressor)`.
+  //   * `BookRecord::side` is the RESTING side on every row — the order's side
+  //     on Add / Cancel / Modify / Clear, and the passive side the print
+  //     executed against on a `BookAction::Trade` row.
+  //   * `BookRecord::aggressor` is the taker, set on `Trade` rows only; it is
+  //     the argument `OrderBookManager::onTrade(..., Aggressor)` takes.
   //
   // DBN defines `side` as "the side of the market for resting orders, OR the
-  // side of the aggressor for trades", so a `Trade` record already reports the
-  // aggressor while a `Fill` reports the RESTING order being filled and has to
-  // be flipped. `ItchAdapter::routeOrderExecuted` does the same flip ("The
-  // resting order's side is passive; the aggressor is the opposite",
-  // ItchAdapter.cpp:180-181) — and crucially it applies it to the
-  // `ObTradeEvent` ONLY: its `ObDeleteEvent{symbol, orderRef}` and
-  // `ObUpdateEvent{symbol, orderRef, nullopt, remaining}` carry no side field
-  // at all, so ITCH is structurally incapable of mixing the two.
+  // side of the aggressor for trades", so the two DBN print actions report
+  // OPPOSITE things and each needs the other value derived:
   //
-  // THE SIDE ON A MUTATION ROW IS A COLUMN THIS ADAPTER ADDED, so the
-  // separation is this adapter's to enforce. It is enforced here by deriving
-  // BOTH values up front and letting `emit` pick by action. An earlier version
-  // flipped one variable before the dispatch, which meant a `Fill` under
-  // `fillReducesRestingOrder` stamped the AGGRESSOR side onto the
-  // `Update`/`Delete` row `applyRemoval` emits — exactly the two-meanings-in-
-  // one-column failure this comment warns about.
+  //   DBN `T` reports the aggressor; the resting side is its opposite.
+  //   DBN `F` reports the resting order; the aggressor is its opposite —
+  //     `ItchAdapter::routeOrderExecuted`'s "The resting order's side is
+  //     passive; the aggressor is the opposite" (ItchAdapter.cpp:180-181).
+  //
+  // MEASURED, not reasoned: on the real XNAS.ITCH MSFT 2022-06-10 mbo sample
+  // every `T` with a side is followed by an `F` at the same (ts_event,
+  // sequence), price and size, and the `F`'s side is the `T`'s opposite in
+  // 91 of 91 pairs (84 T/A + F/B, 7 T/B + F/A). So the two rows of one
+  // execution carry the SAME side and aggressor here. The 65 `T` rows with
+  // side 'N' have no `F` (no displayed resting order to name): `Side::None`
+  // and `Aggressor::Unknown`, with nothing derived.
+  //
+  // ItchAdapter cannot mix the two: its `ObDeleteEvent{symbol, orderRef}` and
+  // `ObUpdateEvent{symbol, orderRef, nullopt, remaining}` carry no side, and
+  // only `ObTradeEvent` gets the flipped aggressor. The side on a mutation row
+  // is a column THIS adapter added, so the separation is this adapter's to
+  // enforce, by deriving both values up front and letting `emit` pick by
+  // action. An earlier version flipped one variable before the dispatch, which
+  // meant a `Fill` under `fillReducesRestingOrder` stamped the AGGRESSOR side
+  // onto the `Update`/`Delete` row `applyRemoval` emits.
   // `DbnActionMappingTest.EveryBookMutationRowCarriesTheRestingSide` is the
   // test that catches it; before it existed, inverting the side of every
   // mutation row left the whole suite green.
-  Side resting = Side::Bid;
-  bool sideKnown = true;
+  const auto opposite = [](Side s) {
+    return s == Side::Bid ? Side::Ask : s == Side::Ask ? Side::Bid : Side::None;
+  };
+  // The side a taker on `s` takes: a buyer lifts the ask, a seller hits the bid.
+  const auto takerOf = [](Side s) {
+    return s == Side::Bid ? Aggressor::Buy : s == Side::Ask ? Aggressor::Sell
+                                                            : Aggressor::Unknown;
+  };
+  Side reported = Side::None;
   switch (side) {
-    case dbn::Side::Bid: resting = Side::Bid; break;
-    case dbn::Side::Ask: resting = Side::Ask; break;
-    case dbn::Side::None:
-      // No representation in data::Side — see kKrnFlagSideUnspecified.
-      sideKnown = false;
-      flags |= kKrnFlagSideUnspecified;
-      ++stats_.sideUnspecified;
-      break;
+    case dbn::Side::Bid: reported = Side::Bid; break;
+    case dbn::Side::Ask: reported = Side::Ask; break;
+    case dbn::Side::None: ++stats_.sideUnspecified; break;
   }
-  const Side aggressor =
-      (sideKnown && m.action == static_cast<char>(dbn::Action::Fill))
-          ? (resting == Side::Bid ? Side::Ask : Side::Bid)
-          : resting;
+  const bool reportsAggressor = m.action == static_cast<char>(dbn::Action::Trade);
+  const Side resting = reportsAggressor ? opposite(reported) : reported;
+  // The taker is on the side opposite the resting order, so a resting BID
+  // was hit by a SELL.
+  const Aggressor aggressor = takerOf(opposite(resting));
 
   const OrderKey key{m.hd.instrumentId, m.orderId};
 
@@ -786,9 +798,9 @@ arrow::Status DatabentoAdapter::onMbo(const dbn::MboMsg& m) {
     r.header   = h;
     r.action   = action;
     // Pick by action, not by a variable mutated earlier — see the long note
-    // above. A Trade row is a print and names the aggressor; everything else
-    // is a book mutation and names the resting order.
-    r.side     = action == BookAction::Trade ? aggressor : resting;
+    // above. Every row names the resting side; only a print has a taker.
+    r.side      = resting;
+    r.aggressor = action == BookAction::Trade ? aggressor : Aggressor::Unknown;
     r.price    = price;
     r.size     = size;
     r.orderId  = m.orderId;
@@ -939,7 +951,6 @@ arrow::Status DatabentoAdapter::onTrade(const dbn::TradeMsg& m) {
     case dbn::Side::Bid: t.aggressor = Aggressor::Buy; break;
     case dbn::Side::Ask: t.aggressor = Aggressor::Sell; break;
     case dbn::Side::None:
-      // TickRecord HAS a representation for this, unlike BookRecord.
       t.aggressor = Aggressor::Unknown;
       ++stats_.sideUnspecified;
       break;

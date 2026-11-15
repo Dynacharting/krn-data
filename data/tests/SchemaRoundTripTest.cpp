@@ -163,7 +163,7 @@ std::vector<BookRecord> bookFixtures(const Tables& t) {
   BookRecord b;
   b.header = headerB(t);
   b.action = BookAction::Clear;   // the epoch-bumping action
-  b.side = Side::Ask;
+  b.side = Side::None;            // ENC-1494: "no side" is a value, not a flag
   b.price = kNoPrice;
   b.size = 0;
   b.orderId = 0;                  // OrderKey::idMissing
@@ -175,8 +175,9 @@ std::vector<BookRecord> bookFixtures(const Tables& t) {
   BookRecord c;
   c.header = headerA(t);
   c.header.providerSeq = 42'000'000'003ULL;
-  c.action = BookAction::TickSize;
-  c.side = Side::Bid;
+  c.action = BookAction::Trade;   // the one action with a taker (ENC-1494)
+  c.side = Side::Ask;             // a buyer lifts the ask
+  c.aggressor = Aggressor::Buy;
   c.price = 10'000'000LL;
   c.size = 0;
   c.orderId = 0;
@@ -351,6 +352,17 @@ TEST(SchemaTest, SchemaVersionOfSaysSoWhenItDoesNotKnow) {
 // Anti-vacuity for the round trips below
 // ---------------------------------------------------------------------------
 
+TEST(BookRecordDefaultTest, ADefaultRecordNamesNoSideAndNoTaker) {
+  // ENC-1494's decision: a default-constructed BookRecord must not be a
+  // plausible wrong value. Before it, `side` defaulted to Bid, so a field
+  // nobody set read as a resting bid; now it reads as "no side", which a book
+  // consumer has to refuse to place.
+  const BookRecord r;
+  EXPECT_EQ(r.side, Side::None);
+  EXPECT_EQ(r.aggressor, Aggressor::Unknown);
+  EXPECT_EQ(r.flags, 0u);
+}
+
 TEST(RoundTripTest, AllFixtureFieldsDifferFromDefault) {
   // If a fixture field equalled its default, the matching EXPECT in the round
   // trip would pass even if the codec never touched that column. This test is
@@ -386,6 +398,15 @@ TEST(RoundTripTest, AllFixtureFieldsDifferFromDefault) {
   EXPECT_TRUE(std::any_of(books.begin(), books.end(), [&](const BookRecord& r) {
     return r.side != bdflt.side;
   })) << "no fixture exercises a non-default Side";
+  EXPECT_TRUE(std::any_of(books.begin(), books.end(), [&](const BookRecord& r) {
+    return r.aggressor != bdflt.aggressor;
+  })) << "no fixture exercises a non-default Aggressor";
+  // Every DECLARED side, so a codec that dropped `None` onto 0 is caught here.
+  for (const Side want : {Side::Bid, Side::Ask, Side::None}) {
+    EXPECT_TRUE(std::any_of(books.begin(), books.end(),
+                            [&](const BookRecord& r) { return r.side == want; }))
+        << "no fixture carries side " << static_cast<int>(want);
+  }
   EXPECT_NE(book.price, bdflt.price);
   EXPECT_NE(book.size, bdflt.size);
   EXPECT_NE(book.orderId, bdflt.orderId);
@@ -518,6 +539,7 @@ TEST(RoundTripTest, BookEvents) {
     SCOPED_TRACE("row " + std::to_string(i));
     EXPECT_EQ(out[i].action, in[i].action);
     EXPECT_EQ(out[i].side, in[i].side);
+    EXPECT_EQ(out[i].aggressor, in[i].aggressor);
     EXPECT_EQ(out[i].price, in[i].price);
     EXPECT_EQ(out[i].size, in[i].size);
     EXPECT_EQ(out[i].orderId, in[i].orderId);
@@ -799,6 +821,7 @@ TEST(IpcTest, EveryTableSurvivesAnIpcStreamRoundTrip) {
         [](const BookRecord& got, const BookRecord& want) {
           EXPECT_EQ(got.action, want.action);
           EXPECT_EQ(got.side, want.side);
+          EXPECT_EQ(got.aggressor, want.aggressor);
           EXPECT_EQ(got.price, want.price);
           EXPECT_EQ(got.size, want.size);
           EXPECT_EQ(got.orderId, want.orderId);
@@ -854,7 +877,7 @@ TEST(CodecRefusalTest, EnumDomainBoundsMatchRecordHpp) {
   // (kMaxSideValue &c. in Schema.cpp). This pins the values those bounds
   // resolve to today, so a reordering that moves the largest enumerator is
   // visible here rather than only in behaviour.
-  EXPECT_EQ(static_cast<std::uint8_t>(Side::Ask), 1);
+  EXPECT_EQ(static_cast<std::uint8_t>(Side::None), 2);
   EXPECT_EQ(static_cast<std::uint8_t>(Aggressor::Sell), 2);
   EXPECT_EQ(static_cast<std::uint8_t>(BookAction::Clear), 5);
 }
@@ -878,12 +901,17 @@ TEST(CodecRefusalTest, DecodeAcceptsEveryDeclaredEnumerator) {
       BookAction::Add, BookAction::Update, BookAction::Delete,
       BookAction::Trade, BookAction::TickSize, BookAction::Clear,
   };
-  const std::vector<Side> allSides = {Side::Bid, Side::Ask};
+  const std::vector<Side> allSides = {Side::Bid, Side::Ask, Side::None};
   const std::vector<Aggressor> allAggressors = {
       Aggressor::Unknown, Aggressor::Buy, Aggressor::Sell,
   };
 
-  auto book = encodeBookEvents(bookFixtures(t), t.symbols, t.venues);
+  // With no taker on any row, so an action swapped onto every row is judged
+  // by the action domain alone, not by the only-a-Trade-has-an-aggressor rule
+  // (that rule has its own test).
+  auto noTaker = bookFixtures(t);
+  for (auto& r : noTaker) r.aggressor = Aggressor::Unknown;
+  auto book = encodeBookEvents(noTaker, t.symbols, t.venues);
   ASSERT_TRUE(book.ok()) << book.status().ToString();
   for (const auto action : allActions) {
     SCOPED_TRACE("action=" + std::to_string(static_cast<int>(action)));
@@ -910,6 +938,27 @@ TEST(CodecRefusalTest, DecodeAcceptsEveryDeclaredEnumerator) {
     EXPECT_TRUE(st.ok()) << st.ToString()
                          << "\n  a DECLARED Side was refused: raise "
                             "kMaxSideValue in data/src/Schema.cpp";
+    if (st.ok()) {
+      ASSERT_EQ(out.size(), 3u);
+      EXPECT_EQ(out[0].side, side);
+    }
+  }
+  // book_events.aggressor, on Trade rows (the only rows that may carry one).
+  {
+    auto trade = withColumnReplaced(**book, "action", uint8Column({3, 3, 3}));
+    for (const auto aggressor : allAggressors) {
+      SCOPED_TRACE("book aggressor=" + std::to_string(static_cast<int>(aggressor)));
+      const int v = static_cast<int>(aggressor);
+      auto b = withColumnReplaced(*trade, "aggressor", uint8Column({v, v, v}));
+      std::vector<BookRecord> out;
+      const auto st = decodeBookEvents(*b, symbols, venues, out);
+      EXPECT_TRUE(st.ok()) << st.ToString()
+                           << "\n  a DECLARED Aggressor was refused on book_events";
+      if (st.ok()) {
+        ASSERT_EQ(out.size(), 3u);
+        EXPECT_EQ(out[0].aggressor, aggressor);
+      }
+    }
   }
 
   auto trades = encodeTrades(tradeFixtures(t), t.symbols, t.venues);
@@ -928,7 +977,9 @@ TEST(CodecRefusalTest, DecodeAcceptsEveryDeclaredEnumerator) {
 
 TEST(CodecRefusalTest, AnOutOfDomainBookActionOrSideIsRefused) {
   Tables t;
-  auto batch = encodeBookEvents(bookFixtures(t), t.symbols, t.venues);
+  auto noTaker = bookFixtures(t);
+  for (auto& r : noTaker) r.aggressor = Aggressor::Unknown;   // see above
+  auto batch = encodeBookEvents(noTaker, t.symbols, t.venues);
   ASSERT_TRUE(batch.ok()) << batch.status().ToString();
   SymbolTable symbols, venues;
 
@@ -957,6 +1008,19 @@ TEST(CodecRefusalTest, AnOutOfDomainBookActionOrSideIsRefused) {
     const auto st = decodeBookEvents(*bad, symbols, venues, out);
     EXPECT_FALSE(st.ok()) << "side=7 decoded without complaint";
     EXPECT_NE(st.ToString().find("side"), std::string::npos) << st.ToString();
+  }
+  // One past `Side::None`, the last enumerator since ENC-1494.
+  {
+    auto bad = withColumnReplaced(**batch, "side", uint8Column({0, 3, 1}));
+    std::vector<BookRecord> out;
+    EXPECT_FALSE(decodeBookEvents(*bad, symbols, venues, out).ok())
+        << "side=3 decoded without complaint";
+  }
+  // `None` itself is legal on book_events (it is refused on a snapshot level).
+  {
+    auto ok = withColumnReplaced(**batch, "side", uint8Column({2, 2, 2}));
+    std::vector<BookRecord> out;
+    EXPECT_TRUE(decodeBookEvents(*ok, symbols, venues, out).ok());
   }
   // The legal boundary value still decodes — the check must be a domain check,
   // not a narrower one.
@@ -988,6 +1052,33 @@ TEST(CodecRefusalTest, AnOutOfDomainAggressorOrSnapshotSideIsRefused) {
     const auto st = decodeBookSnapshots(*bad, symbols, venues, out);
     EXPECT_FALSE(st.ok()) << "side=2 decoded without complaint";
     EXPECT_NE(st.ToString().find("side"), std::string::npos) << st.ToString();
+  }
+}
+
+TEST(CodecRefusalTest, AnAggressorOnABookMutationIsRefused) {
+  // ENC-1494: only a print has a taker. A batch off the wire that puts one on
+  // an Add/Update/Delete/TickSize/Clear row is the two-meanings failure in a
+  // new column, so it is refused, and the refusal names the column.
+  Tables t;
+  auto batch = encodeBookEvents(bookFixtures(t), t.symbols, t.venues);
+  ASSERT_TRUE(batch.ok()) << batch.status().ToString();
+  SymbolTable symbols, venues;
+  {
+    // Fixture row 2 is the Trade with aggressor Buy: legal as encoded.
+    std::vector<BookRecord> out;
+    ASSERT_TRUE(decodeBookEvents(**batch, symbols, venues, out).ok());
+    ASSERT_EQ(out.size(), 3u);
+    ASSERT_EQ(out[2].action, BookAction::Trade);
+    ASSERT_EQ(out[2].aggressor, Aggressor::Buy);
+  }
+  for (const int action : {0, 1, 2, 4, 5}) {
+    SCOPED_TRACE("action=" + std::to_string(action));
+    auto moved = withColumnReplaced(**batch, "action", uint8Column({3, 3, action}));
+    std::vector<BookRecord> out;
+    const auto st = decodeBookEvents(*moved, symbols, venues, out);
+    EXPECT_FALSE(st.ok()) << "an aggressor on action " << action << " decoded";
+    EXPECT_NE(st.ToString().find("aggressor"), std::string::npos) << st.ToString();
+    EXPECT_TRUE(out.empty()) << "a refused batch left rows behind";
   }
 }
 
