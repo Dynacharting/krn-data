@@ -59,6 +59,9 @@ add_library(krn_data STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/ClickHouseHttp.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/IngestWindows.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/IngestWindows.hpp"
+  # ENC-1506: what krn.gaps may be written from (nothing seq-derived today).
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/Gaps.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/Gaps.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/IngestJob.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/krn/data/IngestJob.hpp"
 )
@@ -191,7 +194,15 @@ if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
   # nothing and leave a test skipping instead of failing. The path is absolute
   # so it holds regardless of the test's working directory, and the fixture
   # test FAILS (never skips) when a file is missing.
+  # ENC-1506: the real T5 sample's retained DBN files, which GapsTest.cpp reads
+  # to show the gap refusal holds on real venue sequence numbers. Licensed
+  # vendor data OUTSIDE every working tree (docs/data-layer.md §14.2), so it is
+  # a path, never a fixture. A missing file FAILS the case, never skips it: a
+  # skip reads exactly like a pass (ENC-1095).
+  set(KRN_DATA_SAMPLE_DIR "$ENV{HOME}/market-data/databento/XNAS.ITCH/MSFT/20220610"
+    CACHE PATH "directory holding the retained T5 sample DBN files (ENC-1506)")
   target_compile_definitions(krn_data_tests PRIVATE
+    KRN_DATA_SAMPLE_DIR="${KRN_DATA_SAMPLE_DIR}"
     KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
     KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
   krn_apply_warnings(krn_data_tests)

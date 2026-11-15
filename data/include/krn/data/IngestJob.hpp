@@ -34,7 +34,10 @@
 // session open to snapshot at.
 //
 // `gaps` IS NOT WRITTEN EITHER, and the reason is a measurement rather than
-// scope: see `Report::gapsNote`.
+// scope: see `Report::gapsNote` and Gaps.hpp. The job REFUSES to infer a gap
+// from a seq jump (ENC-1506), reports per kind how many phantom rows that
+// refusal kept out, and refuses to record a window complete over a record the
+// vendor flagged F_MAYBE_BAD_BOOK.
 //
 
 #include "krn/data/ClickHouseHttp.hpp"
@@ -136,6 +139,15 @@ struct KindReport {
   // this is the number.
   std::size_t duplicateSortKeys = 0;
   std::size_t distinctSortKeys  = 0;
+
+  // krn.gaps (ENC-1506, Gaps.hpp). `gapRowsWritten` is the rows the job wrote
+  // and is 0 by construction; `gapNaiveSeqJumps` is how many a seq-jump
+  // detector WOULD have written, i.e. the phantom holes refused.
+  std::string gapPullScope;
+  std::size_t gapNaiveSeqJumps   = 0;
+  std::size_t gapRowsWritten     = 0;
+  std::size_t gapMaybeBadBook    = 0;
+  std::string gapRefusal;
 };
 
 struct Report {

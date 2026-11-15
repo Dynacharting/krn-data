@@ -148,8 +148,10 @@ public:
   //
   // This exists because the three cases below are INDISTINGUISHABLE in a plain
   // SELECT, and the third silently returns a flat market:
-  //     the market was quiet          -> no seq discontinuity; this is data
-  //     the provider has a hole       -> seq discontinuity; a `gaps` row
+  //     the market was quiet          -> this is data
+  //     the provider has a hole       -> a `gaps` row, but NOT from a seq
+  //                                      jump: venue seq is not contiguous
+  //                                      per symbol (docs §8.8, ENC-1506)
   //     WE HAVE NOT INGESTED IT YET   -> nothing at all
   // A query over a window that is not complete must FAIL, not return a short
   // answer.

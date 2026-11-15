@@ -5,6 +5,7 @@
 #include "krn/data/IngestJob.hpp"
 
 #include "krn/data/DatabentoAdapter.hpp"
+#include "krn/data/Gaps.hpp"
 #include "krn/engine/SymbolTable.hpp"
 
 #include <algorithm>
@@ -72,10 +73,15 @@ const char* const kGapsNote =
     "detection needs contiguity. A gap row per jump would have produced hundreds "
     "of phantom holes per kind, each of which a research run joining `gaps` "
     "reads as 'there was no data here': the same wrong-answer class the table "
-    "exists to prevent, manufactured by the detector. A real detector for a "
-    "filtered pull needs either an unfiltered channel feed or the vendor's own "
-    "condition.json (which for 2022-06-10 reads 'available'), and that is a "
-    "ticket, not a line in this one.";
+    "exists to prevent, manufactured by the detector.\n"
+    "  ENC-1506 MADE THE REFUSAL CODE (gaps::infer, Gaps.hpp): no seq-gap row is "
+    "ever inferred -- from a symbol-filtered pull because a jump is proven not "
+    "to be a hole, from an all-symbols pull because contiguity is unmeasured. "
+    "Each kind above reports the phantom rows refused. The one vendor-declared "
+    "signal in DBN, F_MAYBE_BAD_BOOK, carries no bounds, so it becomes no row "
+    "either: the job refuses to record such a window complete. A real detector "
+    "needs an unfiltered pull measured contiguous, a design decision rather "
+    "than code.";
 
 namespace {
 
@@ -708,6 +714,41 @@ arrow::Result<Report> run(const Options& opts) {
             "complete would assert coverage over rows that were silently "
             "dropped (SPEC D11). Check that ", dbnPath,
             " really is the `", spec.dbnSchema, "` pull."));
+      }
+    }
+
+    // krn.gaps (ENC-1506). No seq-derived row is inferred — see Gaps.hpp —
+    // and the count of what a naive detector would have written is reported
+    // so the refusal is a number, not an empty table.
+    {
+      const auto pts = std::string(spec.kind) == "trades"
+                           ? gaps::seqPoints(whole.ticks)
+                           : gaps::seqPoints(whole.book);
+      const gaps::Inference inf = gaps::infer(whole.meta, pts);
+      st.rep.gapPullScope     = gaps::toString(inf.scope);
+      st.rep.gapNaiveSeqJumps = inf.naiveSeqJumps;
+      st.rep.gapRowsWritten   = inf.rows.size();
+      st.rep.gapMaybeBadBook  = inf.vendorMaybeBadBook;
+      st.rep.gapRefusal       = inf.refusal;
+      if (!inf.rows.empty()) {
+        // Unreachable while `infer` writes nothing. Here so that a future
+        // branch that starts emitting rows fails loudly until this job learns
+        // to write them, rather than computing them and dropping them.
+        return asFinding(arrow::Status::Invalid(
+            "gaps::infer returned ", inf.rows.size(), " row(s) for `",
+            spec.kind, "` and this job has no krn.gaps writer."));
+      }
+      if (inf.vendorMaybeBadBook != 0) {
+        // The vendor says the channel lost data, and krn.gaps cannot hold it
+        // (the flag carries no bounds). Recording this window complete would
+        // be a completeness claim over a declared hole — SPEC D11's failure —
+        // so the window is refused, before any table is touched.
+        return asFinding(arrow::Status::Invalid(
+            inf.vendorMaybeBadBook, " `", spec.kind, "` record(s) in ", dbnPath,
+            " carry F_MAYBE_BAD_BOOK, Databento's 'unrecoverable gap detected in "
+            "the channel'. The flag has no seq or event-time bounds, so no "
+            "krn.gaps row can be written for it, and the window is not recorded "
+            "complete (docs/data-layer.md 8.8, ENC-1506)."));
       }
     }
 

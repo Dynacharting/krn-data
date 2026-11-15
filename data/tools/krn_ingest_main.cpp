@@ -225,6 +225,12 @@ void printKind(const ingest::KindReport& k) {
   std::cout << "  dbn records    : " << k.decodedRecords << "\n";
   std::cout << "  canonical rows : " << k.canonicalRows << "\n";
   std::cout << "  rows inserted  : " << k.rowsInserted << "\n";
+  std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
+            << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
+               "written as holes; "
+            << k.gapMaybeBadBook << " F_MAYBE_BAD_BOOK record(s); pull is "
+            << k.gapPullScope << "\n"
+            << "                   " << k.gapRefusal << "\n";
   if (!k.actionCounts.empty()) {
     std::cout << "  action mix     :";
     for (const auto& [a, n] : k.actionCounts) std::cout << ' ' << a << '=' << n;
