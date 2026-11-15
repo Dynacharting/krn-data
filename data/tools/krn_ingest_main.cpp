@@ -251,7 +251,7 @@ void printKind(const ingest::KindReport& k) {
     std::cout << "  ts_recv == ts_event + ts_in_delta : " << k.tsRecvMatchesDelta
               << " / " << k.csvRecords << "\n";
   }
-  std::cout << "  DBN side 'N' on a row (kKrnFlagSideUnspecified) : "
+  std::cout << "  DBN side 'N' on a row (Side::None / Aggressor::Unknown) : "
             << k.sideUnspecified << "\n";
   std::cout << "  sort key (symbol, ts_event, provider_seq): "
             << k.distinctSortKeys << " distinct over " << k.canonicalRows

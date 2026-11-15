@@ -542,8 +542,20 @@ Prices are **`Int64` at a fixed global 1e-9 scale** (C9).
 ### 8.4 Tables in the first slice
 
 - **`trades`** — `price`, `size`, `aggressor`, `book_neutral`, `trade_id`, `flags`.
-- **`book_events`** (MBO / L3) — `action`, `side`, `price`, `size`, `order_id`, `priority`,
-  `depth`, `epoch`, `flags`. `action` mirrors the `feed::FeedEvent` variant set one-for-one.
+- **`book_events`** (MBO / L3) — `action`, `side`, `aggressor`, `price`, `size`, `order_id`,
+  `priority`, `depth`, `epoch`, `flags`. `action` mirrors the `feed::FeedEvent` variant set
+  one-for-one. **`side` is the resting side on every row** (`0` Bid, `1` Ask, `2` None) and
+  **`aggressor` is the taker on a trade row only** (`0` Unknown elsewhere), ENC-1494. DBN's
+  `T` reports the aggressor and its `F` the resting order, so each derives the other; on the
+  real XNAS.ITCH MSFT 2022-06-10 mbo sample the `F` paired with a `T` (same `ts_event`,
+  `sequence`, price, size) has the opposite side in 91 of 91 pairs, so both rows of one
+  execution carry the same `side` and `aggressor`. `None` is not rare: 65 of those 1000 mbo
+  rows (every one a `T` with no `F`) and 546 of the 1000 `trades` rows. Until ENC-1494 it was
+  spelled `Bid` plus bit `0x0100` of `flags`, and a print's `side` was its aggressor.
+  **An L1 loaded before ENC-1494 is reloaded, not migrated**: the table gained a column, and
+  `side`/`flags` changed value on existing rows, so `apply.py verify` reports the missing
+  column and the fix is `apply.sh --fresh` (or dropping `book_events`) followed by
+  `krn_ingest reload` from the retained DBN (§8.7). Only the sample has ever been loaded.
 - **`book_snapshots`** — §8.5.
 - **`symbology`** — §8.9.
 - **`ingest_windows`** — §8.8.
