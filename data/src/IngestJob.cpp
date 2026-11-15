@@ -511,6 +511,11 @@ arrow::Result<Report> run(const Options& opts) {
     std::vector<std::byte> dbnBytes;
     std::vector<csv::Transcoded::Probe> probes;
     bool retainedMatched = false;
+    // The recorded window's inputs, from whichever source this path reads
+    // (metadata.json + CSV on `ingest`, the DBN on `reload`). They meet in ONE
+    // call to `csv::deliveredWindow` below, after the decode (ENC-1636).
+    std::uint64_t winStart = 0, winEnd = 0, winLimit = 0, winRecords = 0,
+                  winLastTs = 0;
 
     if (opts.fromDbnOnly) {
       // THE PURE D6 RELOAD. No CSV and no metadata.json: the retained DBN
@@ -562,15 +567,14 @@ arrow::Result<Report> run(const Options& opts) {
       ARROW_ASSIGN_OR_RAISE(const auto tc,
                             csv::transcodeCsv(csvPath, md, opts.dbnVersion));
       st.rep.csvRecords           = tc.records;
-      st.rep.pullLimit            = md.limit;
-      st.rep.truncatedByLimit     = tc.truncatedByLimit;
       st.rep.recordsAtLastTsEvent = tc.recordsAtLastTsEvent;
       st.rep.tsRecvMatchesDelta   = tc.tsRecvMatchesDelta;
       st.rep.actionCounts         = tc.actionCounts;
-      st.rep.requestedFromNs      = static_cast<std::int64_t>(md.start);
-      st.rep.requestedToNs        = static_cast<std::int64_t>(md.end);
-      st.rep.recordedFromNs       = static_cast<std::int64_t>(md.start);
-      st.rep.recordedToNs         = static_cast<std::int64_t>(tc.deliveredEnd(md));
+      winStart   = md.start;
+      winEnd     = md.end;
+      winLimit   = md.limit;
+      winRecords = tc.records;
+      winLastTs  = tc.lastTsEvent;
       st.mappings                 = tc.mappings;
       probes                      = tc.probes;
 
@@ -807,17 +811,16 @@ arrow::Result<Report> run(const Options& opts) {
 
     if (opts.fromDbnOnly) {
       // The window from the DBN's own metadata — the whole point of writing
-      // `limit` into it.
-      st.rep.pullLimit       = whole.meta.limit;
-      st.rep.requestedFromNs = static_cast<std::int64_t>(whole.meta.start);
-      st.rep.requestedToNs   = static_cast<std::int64_t>(whole.meta.end);
-      st.rep.truncatedByLimit =
-          whole.meta.limit != 0 && whole.stats.recordsIn == whole.meta.limit;
-      std::int64_t lastTs = 0;
-      for (const auto& t : whole.ticks) lastTs = std::max(lastTs, t.header.tsEventNs);
-      for (const auto& b : whole.book) lastTs = std::max(lastTs, b.header.tsEventNs);
-      st.rep.recordedFromNs = st.rep.requestedFromNs;
-      st.rep.recordedToNs = st.rep.truncatedByLimit ? lastTs : st.rep.requestedToNs;
+      // `limit` into it — and from the RECORDS the adapter framed, not the
+      // canonical rows: an mbo action `N` record counts toward `limit` and
+      // yields no row (ENC-1636; it used to take the max over rows).
+      winStart   = whole.meta.start;
+      winEnd     = whole.meta.end;
+      winLimit   = whole.meta.limit;
+      winRecords = whole.stats.recordsIn;
+      winLastTs  = whole.stats.lastTsEvent;
+      st.rep.recordsAtLastTsEvent =
+          static_cast<std::size_t>(whole.stats.recordsAtLastTsEvent);
       for (const auto& m : whole.meta.mappings) {
         for (const auto& iv : m.intervals) {
           std::uint32_t id = 0;
@@ -827,6 +830,38 @@ arrow::Result<Report> run(const Options& opts) {
               iv.endDate > iv.startDate ? iv.endDate - 1 : iv.startDate});
         }
       }
+    }
+
+    // `lastTsEvent` is the delivered end only if ts_event never descends. The
+    // CSV path refuses a descent in the transcoder; a retained DBN is checked
+    // here, so `reload` refuses what `ingest` would have.
+    if (whole.stats.tsEventDescents != 0) {
+      return asFinding(arrow::Status::Invalid(
+          dbnPath, " has ", whole.stats.tsEventDescents,
+          " record(s) whose ts_event is below the previous record's. The "
+          "recorded window's exclusive end is the LAST record's ts_event, which "
+          "is the delivered end only in time order; refused rather than "
+          "published (docs §8.8)."));
+    }
+    // On `ingest` the CSV's count and last ts_event must be what the decoder
+    // saw in the retained DBN, or the two paths would read different inputs.
+    if (!opts.fromDbnOnly && (winRecords != whole.stats.recordsIn ||
+                              winLastTs != whole.stats.lastTsEvent)) {
+      return asFinding(arrow::Status::Invalid(
+          "the CSV for ", spec.kind, " has ", winRecords,
+          " record(s) ending at ts_event ", winLastTs, " but its retained DBN "
+          "decodes ", whole.stats.recordsIn, " ending at ",
+          whole.stats.lastTsEvent, "; `reload` would record a different window."));
+    }
+    {
+      const csv::DeliveredWindow w =
+          csv::deliveredWindow(winStart, winEnd, winLimit, winRecords, winLastTs);
+      st.rep.pullLimit        = winLimit;
+      st.rep.truncatedByLimit = w.truncatedByLimit;
+      st.rep.requestedFromNs  = static_cast<std::int64_t>(winStart);
+      st.rep.requestedToNs    = static_cast<std::int64_t>(winEnd);
+      st.rep.recordedFromNs   = static_cast<std::int64_t>(w.fromNs);
+      st.rep.recordedToNs     = static_cast<std::int64_t>(w.toNs);
     }
 
     if (st.rep.recordedToNs <= st.rep.recordedFromNs) {

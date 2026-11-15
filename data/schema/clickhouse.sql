@@ -614,10 +614,10 @@ SETTINGS index_granularity = 1024;
 -- of two windows produced exactly four rows. Nothing dedups here and nothing
 -- needs to; the read rule is what makes the table readable.
 --
--- (docs §8.8 states the recorded-never-inferred rule and the three-situations
--- table; it specifies NO DDL and NO sort key, so the key here — and its
--- divergence from revision 2's — is this file's decision to own, not a doc
--- citation to lean on.)
+-- (The key here, and its divergence from revision 2's, is this file's decision
+-- to own. docs §8.8 restates it and why session_id is out of it, citing this
+-- DDL as the source since ENC-1492; the doc follows this file, not the
+-- reverse.)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS krn.ingest_windows
 (

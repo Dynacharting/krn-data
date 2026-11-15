@@ -401,6 +401,29 @@ TEST(DatabentoCsvTruncation, FewerRecordsThanTheLimitClaimsTheWholeRequest) {
   EXPECT_EQ(r->deliveredEnd(m), m.end);
 }
 
+TEST(DatabentoCsvTruncation, TheRecordedWindowIsOneFunctionOfRequestLimitAndLastRecord) {
+  // The single definition both job paths call (ENC-1636), with no file at all.
+  const std::uint64_t s = kDayStart + 45000000000000ULL;
+  const std::uint64_t e = kDayStart + 50400000000000ULL;
+  const auto cut = deliveredWindow(s, e, /*limit=*/2, /*records=*/2, kT0 + 11);
+  EXPECT_TRUE(cut.truncatedByLimit);
+  EXPECT_EQ(cut.fromNs, s) << "from_ts is the requested start";
+  EXPECT_EQ(cut.toNs, kT0 + 11) << "to_ts is the last record's ts_event, exclusive";
+
+  const auto under = deliveredWindow(s, e, 2, 1, kT0);
+  EXPECT_FALSE(under.truncatedByLimit);
+  EXPECT_EQ(under.toNs, e);
+
+  const auto noLimit = deliveredWindow(s, e, 0, 0, 0);
+  EXPECT_FALSE(noLimit.truncatedByLimit) << "limit 0 means no limit";
+  EXPECT_EQ(noLimit.toNs, e);
+
+  // All records at the requested start: an empty window, which the job refuses
+  // (`AnEmptyRecordedWindowIsRefusedOnIngestAndOnReload`).
+  const auto empty = deliveredWindow(s, e, 1, 1, s);
+  EXPECT_EQ(empty.fromNs, empty.toNs);
+}
+
 TEST(DatabentoCsvTruncation, NoLimitIsNeverTruncated) {
   const TempDir d;
   const auto p = d.file("x.csv",
@@ -994,6 +1017,164 @@ TEST(DatabentoCsvJob, AMetadataJsonForTheWrongSchemaIsRefused) {
 }
 
 // ===========================================================================
+// THE RELOAD PATH (ENC-1636), driven directly: `fromDbnOnly` + `noInsert`
+// decodes the retained DBN and computes the recorded window with no server.
+// ===========================================================================
+
+ingest::Options reloadOptions(const TempDir& d) {
+  ingest::Options o = fakeOptions(d);
+  o.fromDbnOnly = true;
+  return o;
+}
+
+const ingest::KindReport* kindOf(const ingest::Report& r, const std::string& kind) {
+  for (const auto& k : r.kinds) {
+    if (k.kind == kind) return &k;
+  }
+  return nullptr;
+}
+
+TEST(DatabentoCsvJob, IngestAndReloadRecordTheSameWindowWhenATruncatedPullEndsInActionNone) {
+  const TempDir d;
+  // `limit: 2`, 2 records delivered, and the mbo pull's LAST record is an
+  // action `N`, which yields no canonical row. Docs §8.8 records
+  // `[requested_start, last_ts_event)`, and the vendor's limit counts RECORDS,
+  // so the cut is after the `N` record and `to_ts` is its `ts_event`. Before
+  // ENC-1636 the reload took the largest ts_event over canonical ROWS, recorded
+  // `kT0` instead of `kT0 + 11`, and the reload's own DROP PARTITION then wrote
+  // state=3 over the window the ingest had recorded.
+  writeFakeRoot(
+      d,
+      "1654864201000000013,1654864201000000000,0,2,4242,T,A,0,100,10,0,13,5,ZZZZ\n"
+      "1654864201000000024,1654864201000000011,0,2,4242,T,A,0,101,11,0,13,6,ZZZZ\n",
+      mboRow(kT0, 'A', 'B', 100, 10, 9, 5) + mboRow(kT0 + 11, 'N', 'B', 101, 10, 10, 6),
+      /*limit=*/2);
+  const auto ing = ingest::run(fakeOptions(d));
+  ASSERT_TRUE(ing.ok()) << ing.status().ToString();
+  const auto rel = ingest::run(reloadOptions(d));
+  ASSERT_TRUE(rel.ok()) << rel.status().ToString();
+  ASSERT_EQ(ing->kinds.size(), 2u);
+  ASSERT_EQ(rel->kinds.size(), 2u);
+
+  for (const char* kind : {"trades", "book_events"}) {
+    const auto* a = kindOf(*ing, kind);
+    const auto* b = kindOf(*rel, kind);
+    ASSERT_NE(a, nullptr) << kind;
+    ASSERT_NE(b, nullptr) << kind;
+    EXPECT_TRUE(a->truncatedByLimit) << kind;
+    EXPECT_EQ(a->truncatedByLimit, b->truncatedByLimit) << kind;
+    EXPECT_EQ(a->pullLimit, b->pullLimit) << kind;
+    EXPECT_EQ(a->requestedFromNs, b->requestedFromNs) << kind;
+    EXPECT_EQ(a->requestedToNs, b->requestedToNs) << kind;
+    EXPECT_EQ(a->recordedFromNs, b->recordedFromNs) << kind;
+    EXPECT_EQ(a->recordedToNs, b->recordedToNs)
+        << kind << ": ingest recorded " << a->recordedToNs << ", reload recorded "
+        << b->recordedToNs << ". The same input must record the same window, or "
+           "the reload invalidates the window the ingest wrote (docs §8.6)";
+    EXPECT_EQ(a->recordsAtLastTsEvent, b->recordsAtLastTsEvent) << kind;
+  }
+  const auto* mbo = kindOf(*rel, "book_events");
+  ASSERT_NE(mbo, nullptr);
+  EXPECT_EQ(mbo->recordedToNs, static_cast<std::int64_t>(kT0 + 11))
+      << "to_ts is the LAST RECORD's ts_event, the action-N one included";
+  EXPECT_EQ(mbo->canonicalRows, 1u) << "the N record still yields no book row";
+  EXPECT_EQ(mbo->decodedRecords, 2u);
+}
+
+TEST(DatabentoCsvJob, AReloadReadsItsWindowFromTheRetainedDbnAlone) {
+  const TempDir d;
+  // An untruncated pull, ingested once to retain the DBN, then every CSV and
+  // metadata file removed: the reload must find `start`, `end` and `limit` in
+  // the DBN's own metadata block (docs §8.7, SPEC D6).
+  writeFakeRoot(d,
+                "1654864201000000013,1654864201000000000,0,2,4242,T,A,0,100,10,0,13,5,ZZZZ\n",
+                mboRow(kT0, 'A', 'B', 100, 10, 9, 5), /*limit=*/5);
+  const auto ing = ingest::run(fakeOptions(d));
+  ASSERT_TRUE(ing.ok()) << ing.status().ToString();
+  for (const char* f : {"xnas-itch-20220610.trades.csv", "xnas-itch-20220610.mbo.csv",
+                        "metadata.trades.json", "metadata.mbo.json"}) {
+    ASSERT_TRUE(std::filesystem::remove(d.at(f))) << f;
+  }
+  const auto rel = ingest::run(reloadOptions(d));
+  ASSERT_TRUE(rel.ok()) << rel.status().ToString();
+  ASSERT_EQ(rel->kinds.size(), 2u);
+  for (const auto& b : rel->kinds) {
+    const auto* a = kindOf(*ing, b.kind);
+    ASSERT_NE(a, nullptr) << b.kind;
+    EXPECT_TRUE(b.csvPath.empty()) << b.kind;
+    EXPECT_TRUE(b.jobId.empty()) << b.kind << ": the vendor job id is not in DBN";
+    EXPECT_TRUE(b.roundTripOk) << b.kind << ": " << b.roundTripNote;
+    EXPECT_FALSE(b.truncatedByLimit) << b.kind;
+    EXPECT_EQ(b.pullLimit, 5u) << b.kind;
+    EXPECT_EQ(b.recordedFromNs, 1654864200000000000LL) << b.kind;
+    EXPECT_EQ(b.recordedToNs, 1654869600000000000LL)
+        << b.kind << ": an untruncated pull records the requested end";
+    EXPECT_EQ(b.recordedFromNs, a->recordedFromNs) << b.kind;
+    EXPECT_EQ(b.recordedToNs, a->recordedToNs) << b.kind;
+    EXPECT_EQ(b.sessionId, a->sessionId)
+        << b.kind << ": session_id is the retained file's identity";
+    EXPECT_EQ(b.canonicalRows, a->canonicalRows) << b.kind;
+    EXPECT_EQ(b.symbol, "ZZZZ") << b.kind;
+  }
+}
+
+TEST(DatabentoCsvJob, AReloadRefusesARetainedDbnWhoseTsEventDescends) {
+  const TempDir d;
+  // The CSV path refuses a descent in the transcoder; a retained DBN is
+  // constrained by nothing, so swap its two 48-byte trade records on disk and
+  // the reload must refuse rather than publish the last record as the end.
+  writeFakeRoot(
+      d,
+      "1654864201000000013,1654864201000000000,0,2,4242,T,A,0,100,10,0,13,5,ZZZZ\n"
+      "1654864201000000024,1654864201000000011,0,2,4242,T,A,0,101,11,0,13,6,ZZZZ\n",
+      mboRow(kT0, 'A', 'B', 100, 10, 9, 5), /*limit=*/2);
+  ASSERT_TRUE(ingest::run(fakeOptions(d)).ok());
+  const std::string dbn = d.at("xnas-itch-20220610.trades.dbn");
+  std::string bytes;
+  {
+    std::ifstream in(dbn, std::ios::binary);
+    bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+  ASSERT_GT(bytes.size(), 96u);
+  const std::size_t r1 = bytes.size() - 96, r2 = bytes.size() - 48;
+  ASSERT_EQ(static_cast<unsigned char>(bytes[r1]), 12u) << "48-byte record, length/4";
+  ASSERT_EQ(static_cast<unsigned char>(bytes[r2]), 12u);
+  const std::string swapped = bytes.substr(0, r1) + bytes.substr(r2, 48) + bytes.substr(r1, 48);
+  ASSERT_NE(swapped, bytes) << "the mutation must apply";
+  {
+    std::ofstream out(dbn, std::ios::binary | std::ios::trunc);
+    out << swapped;
+  }
+  const auto rel = ingest::run(reloadOptions(d));
+  ASSERT_FALSE(rel.ok());
+  EXPECT_NE(rel.status().message().find("whose ts_event is below the previous"),
+            std::string::npos)
+      << rel.status().message();
+  EXPECT_TRUE(isFinding(rel.status()));
+}
+
+TEST(DatabentoCsvJob, AnEmptyRecordedWindowIsRefusedOnIngestAndOnReload) {
+  const TempDir d;
+  // `limit: 1` and the one record sits exactly at the requested start, so the
+  // delivered window is `[start, start)`. The transcoder accepts it (one
+  // record, in range), so the refusal that fires is the job's own
+  // `to_ts <= from_ts` check, the last one before pass 2. `trades` runs first.
+  const std::string atStart = "1654864200000000013,1654864200000000000,0,2,4242,T,A,0,"
+                              "100,10,0,13,5,ZZZZ\n";
+  writeFakeRoot(d, atStart, mboRow(kT0, 'A', 'B', 100, 10, 9, 5), /*limit=*/1);
+  for (const bool reload : {false, true}) {
+    const auto rep = ingest::run(reload ? reloadOptions(d) : fakeOptions(d));
+    ASSERT_FALSE(rep.ok()) << (reload ? "reload" : "ingest");
+    EXPECT_NE(rep.status().message().find(
+                  "the delivered window for trades came out empty"),
+              std::string::npos)
+        << rep.status().message();
+    EXPECT_TRUE(isFinding(rep.status()))
+        << "an empty window is a finding about the data (exit 1)";
+  }
+}
+
+// ===========================================================================
 // THE EXIT-CODE CLASSIFICATION — code-review finding #1.
 // ===========================================================================
 
@@ -1074,7 +1255,7 @@ TEST(DatabentoCsvAntiVacuity, EveryCaseInThisFileIsRegistered) {
       found += suite->total_test_count();
     }
   }
-  EXPECT_EQ(found, 43) << "the DatabentoCsv* suites in this file lost or gained a "
+  EXPECT_EQ(found, 48) << "the DatabentoCsv* suites in this file lost or gained a "
                           "case; update the number deliberately rather than "
                           "letting the count drift";
 }

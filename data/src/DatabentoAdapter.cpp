@@ -382,6 +382,15 @@ arrow::Status DatabentoAdapter::drain() {
           "refused rather than read as a schema it is not.");
     }
     ++stats_.recordsIn;
+    if (stats_.recordsIn > 1 && hd.tsEvent == stats_.lastTsEvent) {
+      ++stats_.recordsAtLastTsEvent;
+    } else {
+      if (stats_.recordsIn > 1 && hd.tsEvent < stats_.lastTsEvent) {
+        ++stats_.tsEventDescents;
+      }
+      stats_.lastTsEvent          = hd.tsEvent;
+      stats_.recordsAtLastTsEvent = 1;
+    }
 
     switch (static_cast<dbn::RType>(hd.rtype)) {
       case dbn::RType::Mbo: {

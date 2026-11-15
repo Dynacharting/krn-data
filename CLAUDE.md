@@ -30,7 +30,7 @@ The fetched engine needs RapidJSON and Boost; with no system package, pass
 | `KRN_DATA_BUILD_BENCHMARKS` | `OFF` | build `krn_b2_bench` (ENC-1487, B2 rows/sec per step) and `krn_b1_transport` (ENC-1485, B1; fetches clickhouse-cpp v2.6.2, which uses Arrow's lz4); never ctest cases |
 
 B2: configure `-DCMAKE_BUILD_TYPE=Release -DKRN_DATA_BUILD_BENCHMARKS=ON`, then
-`data/bench/run_b2.sh build` prints the step table (steps 1-3; step 3 is the engine's `inlineDagDrive`, ENC-1625) over the retained trades DBN
+`data/bench/run_b2.sh build` prints the step table (steps 1-3 and 5, step 4 not built, ENC-1626; step 3 is the engine's `inlineDagDrive`, ENC-1625) over the retained trades DBN
 (`KRN_B2_TRADES_DBN`) and, as a separate data point, the mbo DBN (`KRN_B2_MBO_DBN`;
 BookRecords through `BookRecordFieldSource`, ENC-1628), and asserts that each
 `--falsify` mutation turns the bit-identical check red on each. Exit 0 identical, 1 a
