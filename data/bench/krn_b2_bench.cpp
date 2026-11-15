@@ -561,7 +561,7 @@ const std::vector<StepSpec<Rec>>& steps() {
        {}},
       // 4 interned    — needs krn: StreamValue carrying a SymbolId.
       {5, "store-elide", "step 3 + storeWriteElision (writes only declared pull reads)",
-       [](util::Config& c) { c.inlineDagDrive = true; c.storeWriteElision = true; },
+       [](util::Config& c) { c.inlineDagDrive = true; c.storeWriteElision = false; },
        [](Rig& rig, std::span<const Rec> rows, const std::string& ticker, FalsifyState* f) {
          for (const auto& c : rig.chains) {
            auto l = std::dynamic_pointer_cast<nodes::Listener>(c.head);

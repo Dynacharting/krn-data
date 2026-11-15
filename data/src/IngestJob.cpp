@@ -237,7 +237,7 @@ constexpr const char* kTradesColumns =
 
 constexpr const char* kBookEventsColumns =
     "ts_event, ts_recv, provider_seq, session_id, symbol, instrument_id, venue, "
-    "action, side, price, size, order_id, priority, depth, epoch, flags";
+    "action, side, aggressor, price, size, order_id, priority, depth, epoch, flags";
 
 // A field this renderer omits is a field no round-trip assertion covers and no
 // L1 column holds, so the two facts stay tied together. TickRecord's quote half
@@ -262,7 +262,8 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
      << b.header.providerSeq << '\t' << b.header.sessionId << '\t'
      << ch::tsvEscape(symbol) << '\t' << b.header.instrumentId << '\t'
      << ch::tsvEscape(venue) << '\t' << static_cast<unsigned>(b.action) << '\t'
-     << static_cast<unsigned>(b.side) << '\t' << b.price << '\t' << b.size << '\t'
+     << static_cast<unsigned>(b.side) << '\t'
+     << static_cast<unsigned>(b.aggressor) << '\t' << b.price << '\t' << b.size << '\t'
      << b.orderId << '\t' << b.priority << '\t' << b.depth << '\t' << b.epoch
      << '\t' << b.flags << '\n';
   return os.str();
@@ -817,6 +818,33 @@ arrow::Result<Report> run(const Options& opts) {
   if (opts.noInsert) {
     for (const auto& st : staged) rep.kinds.push_back(st.rep);
     return rep;
+  }
+
+  // ---- preflight: the table holds every column the INSERT names ---------
+  //
+  // Before ANY write. An L1 created before a column was added (ENC-1494's
+  // `book_events.aggressor`) refuses the INSERT, but only after the DROP
+  // PARTITION below has emptied the day: measured, the job exited 2 with the
+  // window at state=2 and book_events at 0 rows. Recoverable by reload, and
+  // never reported complete, but it destroyed data it could have refused to
+  // touch. `apply.py verify` names the drift; this makes the job say so first.
+  for (const auto& st : staged) {
+    std::string q = "SELECT ";
+    q += st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns;
+    q += " FROM krn.";
+    q += st.table;
+    q += " LIMIT 0 FORMAT TabSeparated";
+    const auto probe = client.select(q);
+    if (!probe.ok()) {
+      return arrow::Status::Invalid(
+          "krn.", st.table, " does not hold every column this build inserts (",
+          st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns,
+          "): ", probe.status().message(),
+          "\nNothing has been dropped or written. The table predates this "
+          "build's schema: `data/schema/apply.py verify` names the difference, "
+          "and the remedy is re-creating the table from clickhouse.sql and "
+          "reloading from the retained DBN (docs/data-layer.md §8.4).");
+    }
   }
 
   // ---- pass 2: drop, insert, record -------------------------------------

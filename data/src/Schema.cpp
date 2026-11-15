@@ -239,6 +239,10 @@ arrow::Result<const ArrayType*> column(const arrow::RecordBatch& batch,
 // following), and they catch any out-of-domain wire value, which is what the
 // check is actually for.
 inline constexpr std::uint8_t kMaxSideValue =
+    static_cast<std::uint8_t>(Side::None);
+// A snapshot LEVEL is always on one side of the book, so `Side::None` is out
+// of its domain even though it is a legal `book_events.side` (ENC-1494).
+inline constexpr std::uint8_t kMaxLevelSideValue =
     static_cast<std::uint8_t>(Side::Ask);
 inline constexpr std::uint8_t kMaxAggressorValue =
     static_cast<std::uint8_t>(Aggressor::Sell);
@@ -475,6 +479,7 @@ std::shared_ptr<arrow::Schema> bookEventsSchema() {
   static const auto s = makeSchema({
       arrow::field("action", arrow::uint8(), /*nullable=*/false),
       arrow::field("side", arrow::uint8(), false),
+      arrow::field("aggressor", arrow::uint8(), false),
       arrow::field("price", arrow::int64(), false),
       arrow::field("size", arrow::uint64(), false),
       arrow::field("order_id", arrow::uint64(), false),
@@ -619,7 +624,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> encodeBookEvents(
     const SymbolTable& venues, arrow::MemoryPool* pool) {
   pool = poolOr(pool);
   HeaderBuilders hdr(symbols, venues, pool);
-  arrow::UInt8Builder action(pool), side(pool);
+  arrow::UInt8Builder action(pool), side(pool), aggressor(pool);
   arrow::Int64Builder price(pool);
   arrow::UInt64Builder size(pool), orderId(pool), priority(pool);
   arrow::UInt16Builder depth(pool), flags(pool);
@@ -629,6 +634,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> encodeBookEvents(
     ARROW_RETURN_NOT_OK(hdr.append(r.header));
     ARROW_RETURN_NOT_OK(action.Append(static_cast<std::uint8_t>(r.action)));
     ARROW_RETURN_NOT_OK(side.Append(static_cast<std::uint8_t>(r.side)));
+    ARROW_RETURN_NOT_OK(aggressor.Append(static_cast<std::uint8_t>(r.aggressor)));
     ARROW_RETURN_NOT_OK(price.Append(r.price));
     ARROW_RETURN_NOT_OK(size.Append(r.size));
     ARROW_RETURN_NOT_OK(orderId.Append(r.orderId));
@@ -642,10 +648,11 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> encodeBookEvents(
   ARROW_RETURN_NOT_OK(hdr.finish(&cols));
   std::shared_ptr<arrow::Array> a;
   ARROW_RETURN_NOT_OK(action.Finish(&a));   cols.push_back(a);
-  ARROW_RETURN_NOT_OK(side.Finish(&a));     cols.push_back(a);
-  ARROW_RETURN_NOT_OK(price.Finish(&a));    cols.push_back(a);
-  ARROW_RETURN_NOT_OK(size.Finish(&a));     cols.push_back(a);
-  ARROW_RETURN_NOT_OK(orderId.Finish(&a));  cols.push_back(a);
+  ARROW_RETURN_NOT_OK(side.Finish(&a));      cols.push_back(a);
+  ARROW_RETURN_NOT_OK(aggressor.Finish(&a)); cols.push_back(a);
+  ARROW_RETURN_NOT_OK(price.Finish(&a));     cols.push_back(a);
+  ARROW_RETURN_NOT_OK(size.Finish(&a));      cols.push_back(a);
+  ARROW_RETURN_NOT_OK(orderId.Finish(&a));   cols.push_back(a);
   ARROW_RETURN_NOT_OK(priority.Finish(&a)); cols.push_back(a);
   ARROW_RETURN_NOT_OK(depth.Finish(&a));    cols.push_back(a);
   ARROW_RETURN_NOT_OK(epoch.Finish(&a));    cols.push_back(a);
@@ -775,6 +782,8 @@ arrow::Status decodeBookEvents(const arrow::RecordBatch& batch,
 
   ARROW_ASSIGN_OR_RAISE(const auto* action, column<arrow::UInt8Array>(batch, "action"));
   ARROW_ASSIGN_OR_RAISE(const auto* side, column<arrow::UInt8Array>(batch, "side"));
+  ARROW_ASSIGN_OR_RAISE(const auto* aggressor,
+                        column<arrow::UInt8Array>(batch, "aggressor"));
   ARROW_ASSIGN_OR_RAISE(const auto* price, column<arrow::Int64Array>(batch, "price"));
   ARROW_ASSIGN_OR_RAISE(const auto* size, column<arrow::UInt64Array>(batch, "size"));
   ARROW_ASSIGN_OR_RAISE(const auto* orderId, column<arrow::UInt64Array>(batch, "order_id"));
@@ -793,6 +802,19 @@ arrow::Status decodeBookEvents(const arrow::RecordBatch& batch,
                                              "action"));
     ARROW_ASSIGN_OR_RAISE(r.side,
                           enumAt<Side>(*side, i, kMaxSideValue, "side"));
+    ARROW_ASSIGN_OR_RAISE(r.aggressor,
+                          enumAt<Aggressor>(*aggressor, i, kMaxAggressorValue,
+                                            "aggressor"));
+    // Only a print has a taker. An aggressor on a book mutation is the
+    // two-meanings-in-one-row failure ENC-1494 removed, arriving over the
+    // wire instead of from the adapter, so it is refused rather than carried.
+    if (r.aggressor != Aggressor::Unknown && r.action != BookAction::Trade) {
+      return arrow::Status::Invalid(
+          "krn::data: row ", i, " of book_events has aggressor ",
+          static_cast<unsigned>(r.aggressor), " on action ",
+          static_cast<unsigned>(r.action),
+          "; only a Trade row (action 3) has an aggressor");
+    }
     r.price = price->Value(i);
     r.size = size->Value(i);
     r.orderId = orderId->Value(i);
@@ -826,7 +848,7 @@ arrow::Status decodeBookSnapshots(const arrow::RecordBatch& batch,
     ARROW_ASSIGN_OR_RAISE(r.header, hdr.at(i));
     r.snapshotSeq = seq->Value(i);
     ARROW_ASSIGN_OR_RAISE(r.level.side,
-                          enumAt<Side>(*side, i, kMaxSideValue, "side"));
+                          enumAt<Side>(*side, i, kMaxLevelSideValue, "side"));
     r.level.price = price->Value(i);
     r.level.size = size->Value(i);
     r.level.orderCount = count->Value(i);
