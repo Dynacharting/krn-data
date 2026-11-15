@@ -401,6 +401,29 @@ TEST(DatabentoCsvTruncation, FewerRecordsThanTheLimitClaimsTheWholeRequest) {
   EXPECT_EQ(r->deliveredEnd(m), m.end);
 }
 
+TEST(DatabentoCsvTruncation, TheRecordedWindowIsOneFunctionOfRequestLimitAndLastRecord) {
+  // The single definition both job paths call (ENC-1636), with no file at all.
+  const std::uint64_t s = kDayStart + 45000000000000ULL;
+  const std::uint64_t e = kDayStart + 50400000000000ULL;
+  const auto cut = deliveredWindow(s, e, /*limit=*/2, /*records=*/2, kT0 + 11);
+  EXPECT_TRUE(cut.truncatedByLimit);
+  EXPECT_EQ(cut.fromNs, s) << "from_ts is the requested start";
+  EXPECT_EQ(cut.toNs, kT0 + 11) << "to_ts is the last record's ts_event, exclusive";
+
+  const auto under = deliveredWindow(s, e, 2, 1, kT0);
+  EXPECT_FALSE(under.truncatedByLimit);
+  EXPECT_EQ(under.toNs, e);
+
+  const auto noLimit = deliveredWindow(s, e, 0, 0, 0);
+  EXPECT_FALSE(noLimit.truncatedByLimit) << "limit 0 means no limit";
+  EXPECT_EQ(noLimit.toNs, e);
+
+  // All records at the requested start: an empty window, which the job refuses
+  // (`AnEmptyRecordedWindowIsRefusedOnIngestAndOnReload`).
+  const auto empty = deliveredWindow(s, e, 1, 1, s);
+  EXPECT_EQ(empty.fromNs, empty.toNs);
+}
+
 TEST(DatabentoCsvTruncation, NoLimitIsNeverTruncated) {
   const TempDir d;
   const auto p = d.file("x.csv",
@@ -1197,7 +1220,7 @@ TEST(DatabentoCsvAntiVacuity, EveryCaseInThisFileIsRegistered) {
       found += suite->total_test_count();
     }
   }
-  EXPECT_EQ(found, 46) << "the DatabentoCsv* suites in this file lost or gained a "
+  EXPECT_EQ(found, 47) << "the DatabentoCsv* suites in this file lost or gained a "
                           "case; update the number deliberately rather than "
                           "letting the count drift";
 }
