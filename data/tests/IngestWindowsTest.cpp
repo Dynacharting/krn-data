@@ -19,10 +19,12 @@
 // one the DDL named and left to the reader.
 //
 
+#include "krn/data/IngestJob.hpp"
 #include "krn/data/IngestWindows.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -276,6 +278,119 @@ TEST(IngestWindowsMerge, AdjacentHalfOpenIntervalsJoinAndDisjointOnesDoNot) {
 }
 
 // ---------------------------------------------------------------------------
+// The invalidation a DROP PARTITION owes (§8.6, ENC-1635).
+//
+// A day partition holds every window of every symbol, so dropping it for one
+// re-ingest deletes the rows of every other recorded window on that day, the
+// re-ingesting symbol's own other windows included. The reload puts back only
+// the rows of the window being re-ingested. The ledger below replays the job's
+// pass-2 writes in order (state=3 for each `invalidationTargets` result, then
+// state=0 and state=1 for the own window) and asks the read rule afterwards.
+// ---------------------------------------------------------------------------
+
+struct LedgerRow {
+  std::string symbol;
+  IngestWindowRow row;
+};
+
+struct Ledger {
+  std::vector<LedgerRow> rows;
+  std::int64_t clockMs = 0;
+
+  void write(const std::string& sym, std::int64_t from, std::int64_t to,
+             std::uint8_t state) {
+    rows.push_back(LedgerRow{sym, row(from, to, state, ++clockMs)});
+  }
+
+  // Pass 2 of `ingest::run` for one kind, re-ingesting [from, to) of `sym`
+  // over the day partition [dayFrom, dayFrom + kD).
+  std::vector<ingest::RecordedWindow> reingest(const std::string& sym,
+                                               std::int64_t from, std::int64_t to,
+                                               std::int64_t dayFrom) {
+    // The job's SELECT DISTINCT: windows of this kind intersecting the day.
+    std::vector<ingest::RecordedWindow> intersecting;
+    for (const auto& r : rows) {
+      const ingest::RecordedWindow w{r.symbol, r.row.fromTsNs, r.row.toTsNs};
+      if (w.fromTsNs < dayFrom + kD && w.toTsNs > dayFrom &&
+          std::find(intersecting.begin(), intersecting.end(), w) ==
+              intersecting.end()) {
+        intersecting.push_back(w);
+      }
+    }
+    const auto targets = ingest::invalidationTargets(intersecting, sym, from, to);
+    for (const auto& t : targets) write(t.symbol, t.fromTsNs, t.toTsNs, 3);
+    write(sym, from, to, 0);  // in flight; DROP PARTITION; insert
+    write(sym, from, to, 1);
+    return targets;
+  }
+
+  Completeness read(const std::string& sym, std::int64_t from,
+                    std::int64_t to) const {
+    std::vector<IngestWindowRow> mine;
+    for (const auto& r : rows) {
+      if (r.symbol == sym) mine.push_back(r.row);
+    }
+    return isComplete(mine, from, to);
+  }
+};
+
+TEST(IngestWindowsInvalidation, ASameSymbolsOtherWindowOnTheDroppedDayReadsIncomplete) {
+  const std::int64_t day = 19153 * kD;  // 2022-06-10 00:00 UTC
+  const std::int64_t w1From = day + 12 * kH, w1To = day + 13 * kH;
+  const std::int64_t w2From = day + 14 * kH, w2To = day + 15 * kH;
+  Ledger l;
+  l.write("MSFT", w1From, w1To, 1);
+  l.write("MSFT", w2From, w2To, 1);
+  ASSERT_TRUE(l.read("MSFT", w1From, w1To).complete);
+  ASSERT_TRUE(l.read("MSFT", w2From, w2To).complete);
+
+  l.reingest("MSFT", w1From, w1To, day);
+
+  EXPECT_TRUE(l.read("MSFT", w1From, w1To).complete)
+      << "the re-ingested window was reloaded and must read complete";
+  const auto v = l.read("MSFT", w2From, w2To);
+  EXPECT_FALSE(v.complete)
+      << "MSFT [14:00, 15:00) still reads COMPLETE after DROP PARTITION "
+         "20220610 deleted its rows and the reload put back only "
+         "[12:00, 13:00)";
+  EXPECT_GT(v.resolved, 0u);
+  EXPECT_EQ(v.survived, 1u) << "only the reloaded window survives";
+}
+
+TEST(IngestWindowsInvalidation, AnotherSymbolsWindowOnTheDroppedDayReadsIncomplete) {
+  const std::int64_t day = 19153 * kD;
+  Ledger l;
+  l.write("AAPL", day + 9 * kH, day + 10 * kH, 1);
+  l.write("MSFT", day + 12 * kH, day + 13 * kH, 1);
+  l.reingest("MSFT", day + 12 * kH, day + 13 * kH, day);
+  EXPECT_FALSE(l.read("AAPL", day + 9 * kH, day + 10 * kH).complete);
+  EXPECT_TRUE(l.read("MSFT", day + 12 * kH, day + 13 * kH).complete);
+}
+
+TEST(IngestWindowsInvalidation, TheWindowBeingReingestedIsNotATarget) {
+  // Its own state=0 and state=1 rows are the ones that resolve it. A state=3
+  // on it would be superseded anyway; it is excluded so the report lists only
+  // the windows the drop actually costs.
+  const std::int64_t day = 19153 * kD;
+  Ledger l;
+  l.write("MSFT", day + 12 * kH, day + 13 * kH, 1);
+  const auto targets = l.reingest("MSFT", day + 12 * kH, day + 13 * kH, day);
+  EXPECT_TRUE(targets.empty());
+  EXPECT_TRUE(l.read("MSFT", day + 12 * kH, day + 13 * kH).complete);
+}
+
+TEST(IngestWindowsInvalidation, AWindowInsideTheReloadedOneStaysCoveredByIt) {
+  // Invalidating every other window is conservative, never short: a window the
+  // reload's own range contains is still covered by the reloaded window under
+  // the read rule's union, so its state=3 costs no request an answer.
+  const std::int64_t day = 19153 * kD;
+  Ledger l;
+  l.write("MSFT", day + 12 * kH, day + 12 * kH + kH / 2, 1);
+  l.reingest("MSFT", day + 12 * kH, day + 13 * kH, day);
+  EXPECT_TRUE(l.read("MSFT", day + 12 * kH, day + 12 * kH + kH / 2).complete);
+}
+
+// ---------------------------------------------------------------------------
 // ANTI-VACUITY. `data/CMakeLists.txt` globs `tests/*.cpp` WITHOUT
 // CONFIGURE_DEPENDS (ENC-1495), so a new test file that was never configured in
 // is not compiled, and the binary then reports "0 tests from 0 test suites" at
@@ -295,7 +410,7 @@ TEST(IngestWindowsAntiVacuity, EveryCaseInThisFileIsRegistered) {
     const std::string name = suite->name();
     if (name.rfind("IngestWindows", 0) == 0) found += suite->total_test_count();
   }
-  EXPECT_EQ(found, 18) << "the IngestWindows* suites in this file lost or gained "
+  EXPECT_EQ(found, 22) << "the IngestWindows* suites in this file lost or gained "
                           "a case; update the number deliberately rather than "
                           "letting the count drift";
 }
