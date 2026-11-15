@@ -531,7 +531,7 @@ it is a one-line enable when the universe grows.
 |---|---|---|
 | `ts_event` | `DateTime64(9,'UTC')` | venue event time. **The only time an operator may key off.** |
 | `ts_recv` | `DateTime64(9,'UTC')` | normalizer receipt. Diagnostics only — never an operator input, never a window boundary. |
-| `provider_seq` | `UInt64`, non-null | from Databento. Monotonic within `(session_id, symbol)`. |
+| `provider_seq` | `UInt64`, non-null | from Databento. Monotonic within `(session_id, symbol)`. **Not contiguous** on a symbol-filtered pull: it is the venue's sequence (§8.8, ENC-1506). |
 | `session_id` | `UInt32` | ingest session. |
 | `symbol` | `LowCardinality(String)` | **the ticker** — see §8.9. |
 | `instrument_id` | `UInt32` | **the DBN id**, retained for provenance — §8.9. |
@@ -549,6 +549,9 @@ Prices are **`Int64` at a fixed global 1e-9 scale** (C9).
 - **`ingest_windows`** — §8.8.
 - **`gaps`** — discontinuities as rows, not metrics. A research run that cannot see "there
   was no data here" treats a gap as a flat market: a wrong answer, not missing telemetry.
+  **Defined and not populated** (ENC-1506): no mechanism available today is shown to write
+  zero rows on known-good data, and a phantom hole is the same wrong answer inverted.
+  §8.8 has the ruling.
 
 **`quotes` (L1 top-of-book) is NOT in the first slice.** With no `mbp-1` in the plan nothing
 populates it — top-of-book is computed from the reconstructed book via
@@ -620,9 +623,66 @@ returns a flat market:
 
 | cause | detection |
 |---|---|
-| the market was quiet | no seq discontinuity — this is data |
-| the provider has a hole | seq discontinuity — a `gaps` row |
+| the market was quiet | ~~no seq discontinuity~~ — **not detectable from seq on a filtered pull** (below) |
+| the provider has a hole | ~~seq discontinuity — a `gaps` row~~ — **only a vendor-declared signal; no row today** (below) |
 | **we have not ingested it yet** | not in `ingest_windows` — **not a gap** |
+
+**⚠ THE SEQ-DISCONTINUITY ROWS ARE WITHDRAWN FOR EVERY PULL THIS LAYER HAS SEEN (ENC-1506).**
+Databento's `sequence`, our `provider_seq`, is the **venue's** message sequence, not the
+symbol's. On a pull filtered to one symbol every other instrument's messages occupy the
+numbers in between, so complete data steps `11404021 → 11404028 → 11423666`. Monotonic, as
+§8.3 says; contiguous, never. On the real T5 sample a gap row per jump would have written
+**434** rows on `mbo` and **610** on `trades`, all 1,044 of them **phantom holes** in data that
+is complete. A research run joining `gaps` reads each as "there was no data here", the §8.4
+failure inverted and manufactured by the instrument meant to prevent it.
+
+The rule, implemented once in `gaps::infer` (`data/include/krn/data/Gaps.hpp`) and called by
+the ingest job:
+
+- **No `gaps` row is ever inferred from a seq jump.** The pull's scope is read from the DBN
+  metadata's own `symbols` list. A **symbol-filtered** pull (or one with no symbol list) is
+  refused because a jump is *proven* not to be a hole. An **all-symbols** pull
+  (`symbols = ["ALL_SYMBOLS"]`) is refused because its contiguity is *unmeasured*: no
+  unfiltered pull exists to show that a jump there is a hole and not, say, a venue message
+  type that produces no MBO record. Unproven is not wrong, so that branch is the one place a
+  future measurement can land.
+- **What the refusal kept out is reported as a number, not a row.** `krn_ingest` prints, per
+  kind, rows written (0), the naive detector's count, the pull scope and the reason.
+- **The vendor's own signal is counted and cannot become a row.** DBN's flags byte has
+  `F_MAYBE_BAD_BOOK`, "an unrecoverable gap was detected in the channel", which *is* evidence.
+  It carries no seq bounds and no event-time bounds, and `krn.gaps` requires both, so a row
+  would have to invent them. Instead the ingest job **refuses to record the window complete**
+  (exit 1, before any table is touched): an unrecorded window fails a query through D11,
+  while a window claimed complete with no gap row answers flat. The T5 sample has 0 such
+  records in either kind.
+- **`condition.json`** (Databento's per-date `available` / `degraded` / `pending` /
+  `missing`) is the other vendor signal. It is day-granular, sits beside the CSV rather than in
+  the DBN, and is not read; for 2022-06-10 it reads `available`.
+
+`GapsRealSample` in `data/tests/GapsTest.cpp` asserts this on the real sample through the
+job's own reload path: 0 rows written where the naive count is exactly 434 + 610, and a scratch
+copy with `F_MAYBE_BAD_BOOK` set on one record is refused as a finding.
+
+**Open, and each is a decision rather than code:**
+
+1. **Buy an unfiltered pull?** It is the only test of whether an all-symbols `sequence` is
+   contiguous per channel, and therefore of whether seq-gap detection can exist on the
+   historical path at all. A cost and scope question.
+2. **The live and historical paths now have different gap semantics.** Live,
+   `OrderBookManager::onSeq` gates each delta against a venue feed whose seq genuinely is
+   contiguous, marks the book stale and requests a snapshot (§9). Historically nothing is
+   inferred. That is the divergence SPEC D1 exists to prevent, named here rather than
+   discovered: a historical replay through `onSeq` with a filtered pull's seq would mark the
+   book stale on every jump.
+3. **Does `isStale` reach `ob::Provider`?** Still unverified (SPEC §5). If it does not, the
+   point above becomes a phantom staleness the provider serves through.
+4. **`F_MAYBE_BAD_BOOK` as a row.** Writing it needs a `cause` value and bounds the flag does
+   not give (from the previous record's `ts_event` and `provider_seq`, say). Until that is
+   decided the window is refused, which is the conservative half.
+
+The DDL's own comments beside `CREATE TABLE krn.ingest_windows` and `krn.gaps`
+(`data/schema/clickhouse.sql`) still describe the seq detector; they are left for a schema
+ticket because ENC-1494 is editing that file concurrently.
 
 So completeness is **recorded by the ingest job, never inferred from row counts** (a quiet
 window and a missing window have the same count, which is the whole problem), and
