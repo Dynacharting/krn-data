@@ -453,9 +453,16 @@ SETTINGS index_granularity = 1024;
 -- The reason this table exists is that three situations are INDISTINGUISHABLE
 -- in a plain SELECT, and the third silently returns a flat market:
 --
---     the market was quiet         -> no seq discontinuity. This is data.
---     the provider has a hole      -> seq discontinuity. A `gaps` row.
+--     the market was quiet         -> no rows. This is data.
+--     the provider has a hole      -> no rows either, today: see krn.gaps.
 --     WE HAVE NOT INGESTED IT YET  -> nothing at all, and no error anywhere.
+--
+-- The first two used to be told apart by a `provider_seq` discontinuity. That
+-- detector is WITHDRAWN (ENC-1506): Databento's `sequence` is the venue's, so
+-- a symbol-filtered pull jumps on complete data (434 mbo + 610 trades phantom
+-- holes on the real sample). Only the vendor's F_MAYBE_BAD_BOOK says "hole",
+-- and over such a record the ingest job does not record the window complete.
+-- docs §8.8 has the rule; `gaps::infer` (Gaps.hpp) implements it.
 --
 -- A research run over a not-yet-ingested window must FAIL, not return a short
 -- answer (IL1Store::isComplete). Completeness is RECORDED here by the ingest
@@ -683,10 +690,17 @@ SETTINGS index_granularity = 1024;
 -- creates is covered by the invariant in krn.ingest_windows above — this table
 -- is named there for exactly that reason.
 --
--- The cost, recorded: the detector must supply event-time bounds for the hole,
--- not only seq bounds. It has them — a seq discontinuity is found between two
--- messages, and both carry ts_event — but it is an obligation on ENC-1483 that
--- revision 2 did not impose. ts_detected stays as a diagnostic column.
+-- The cost, recorded: a writer must supply event-time bounds for the hole,
+-- not only seq bounds. ts_detected stays as a diagnostic column.
+--
+-- ⚠ DEFINED AND NOT POPULATED (ENC-1506). The seq-discontinuity detector this
+-- table was designed around is withdrawn: `provider_seq` is the venue's
+-- sequence, never contiguous on a symbol-filtered pull, so a row per jump is a
+-- phantom hole in complete data — the wrong answer this table exists to
+-- prevent, inverted. On an all-symbols pull contiguity is unmeasured. The
+-- vendor's F_MAYBE_BAD_BOOK carries no bounds, so it refuses the window
+-- instead of becoming a row. `cause` 0 (seq-gap) is therefore never written
+-- from history today. docs §8.8 has the rule and the open decisions.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS krn.gaps
 (

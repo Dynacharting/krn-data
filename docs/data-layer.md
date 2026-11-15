@@ -693,8 +693,7 @@ copy with `F_MAYBE_BAD_BOOK` set on one record is refused as a finding.
    decided the window is refused, which is the conservative half.
 
 The DDL's own comments beside `CREATE TABLE krn.ingest_windows` and `krn.gaps`
-(`data/schema/clickhouse.sql`) still describe the seq detector; they are left for a schema
-ticket because ENC-1494 is editing that file concurrently.
+(`data/schema/clickhouse.sql`) say the same since ENC-1494.
 
 So completeness is **recorded by the ingest job, never inferred from row counts** (a quiet
 window and a missing window have the same count, which is the whole problem), and
