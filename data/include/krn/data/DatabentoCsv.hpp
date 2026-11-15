@@ -93,6 +93,43 @@ struct PullMetadata {
 arrow::Result<PullMetadata> readPullMetadata(const std::string& path);
 
 // ---------------------------------------------------------------------------
+// The recorded window (docs §8.8). ONE definition, called by `ingest` (inputs
+// from metadata.json and the CSV) and by `reload` (inputs from the retained
+// DBN's metadata block and the adapter's `Stats`), so the two paths cannot
+// record different windows for the same input (ENC-1636).
+//
+//   truncated := limit != 0 AND records == limit
+//   [from, to) := [requestedStart, lastTsEvent)   if truncated
+//                 [requestedStart, requestedEnd)  otherwise
+//
+// `records` and `lastTsEvent` are over every RECORD delivered, never over the
+// canonical rows: the vendor's `limit` counts records, so the cut falls after
+// the last record whatever its action. An mbo action `N` record ("no effect on
+// the book") is delivered and counted but yields no row; taking its ts_event
+// claims an interval in which the book provably did not change, while taking
+// the last ROW's would under-claim and disagree with `records == limit`, which
+// that `N` record helped satisfy. `lastTsEvent` assumes non-decreasing
+// ts_event; both callers refuse a descent before relying on it.
+// ---------------------------------------------------------------------------
+struct DeliveredWindow {
+  std::uint64_t fromNs = 0;
+  std::uint64_t toNs   = 0;  // half-open
+  bool truncatedByLimit = false;
+};
+
+inline DeliveredWindow deliveredWindow(std::uint64_t requestedStart,
+                                       std::uint64_t requestedEnd,
+                                       std::uint64_t limit,
+                                       std::uint64_t records,
+                                       std::uint64_t lastTsEvent) {
+  DeliveredWindow w;
+  w.truncatedByLimit = limit != 0 && records == limit;
+  w.fromNs = requestedStart;
+  w.toNs   = w.truncatedByLimit ? lastTsEvent : requestedEnd;
+  return w;
+}
+
+// ---------------------------------------------------------------------------
 // The result of transcoding one CSV.
 // ---------------------------------------------------------------------------
 struct Transcoded {
@@ -159,7 +196,7 @@ struct Transcoded {
   //                    the CLAIM is the conservative direction; the rows
   //                    themselves are still inserted.
   std::uint64_t deliveredEnd(const PullMetadata& md) const {
-    return truncatedByLimit ? lastTsEvent : md.end;
+    return deliveredWindow(md.start, md.end, md.limit, records, lastTsEvent).toNs;
   }
 };
 

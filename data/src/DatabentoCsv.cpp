@@ -212,7 +212,9 @@ struct Common {
           " record(s)) is not the maximum (", maxTsEvent, ", ",
           recordsAtMaxTsEvent, " record(s))");
     }
-    out.truncatedByLimit = md.limit != 0 && out.records == md.limit;
+    out.truncatedByLimit =
+        deliveredWindow(md.start, md.end, md.limit, out.records, out.lastTsEvent)
+            .truncatedByLimit;
     for (const auto& [action, n] : actions) out.actionCounts.emplace_back(action, n);
     for (const auto& [id, bySym] : seen) {
       if (bySym.size() != 1) {
