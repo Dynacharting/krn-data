@@ -34,7 +34,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # one-line diff here; KRN_DATA_KRN_TARGETS is what the engine defines in
 # consumed mode at that commit, and changes in the same diff when it changes.
 set(_kd_pin_repository "https://github.com/Dynacharting/krn.git")
-set(_kd_pin_commit     "eda2dc48261acf5b276aa82a29146128b98b54c5")
+set(_kd_pin_commit     "75a5616d7574961a88bdb8496118b0756343aaf3")
 set(KRN_DATA_KRN_TARGETS krn_engine krn_host krn_plugin_reference)
 
 # ENC-1633. -DKRN_DATA_KRN_COMMIT=<sha> (and -DKRN_DATA_KRN_REPOSITORY=<url>)

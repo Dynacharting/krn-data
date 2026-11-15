@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_b2.sh — print the B2 step table over the real sample, one data point per
-# schema (trades, then mbo), then prove the bit-identical assertion can fail on
-# each (ENC-1487, ENC-1628).
+# schema (trades, then mbo) on each graph (default, wide), then prove the
+# bit-identical assertion can fail on each (ENC-1487, ENC-1628, ENC-1627).
 #
 #   data/bench/run_b2.sh [build-dir]
 #
@@ -47,30 +47,35 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# ENC-1627: each data point on both graphs. `wide` adds seven pushed builtins
+# whose store keys nothing reads, which is what step 5 elides.
+for graph in default wide; do
 for schema in trades mbo; do
   dbn=$trades; [[ $schema == mbo ]] && dbn=$mbo
   for threads in hw 1; do
-    echo "## B2 steps 1-3, $schema — pool threads = $([[ $threads == hw ]] && echo "hardware_concurrency (Host's default)" || echo 1)"
+    echo "## B2 steps 1-3 and 5, $schema, $graph graph — pool threads = $([[ $threads == hw ]] && echo "hardware_concurrency (Host's default)" || echo 1)"
     echo
     targs=(); [[ $threads == 1 ]] && targs=(--threads 1)
-    "$bin" --dbn "$dbn" --iterations "$iters" --warmup "$warm" "${targs[@]}"
+    "$bin" --dbn "$dbn" --iterations "$iters" --warmup "$warm" --graph="$graph" "${targs[@]}"
     rc=$?
-    [[ $rc -eq 0 ]] || { echo "run_b2.sh: $schema measurement exited $rc" >&2; exit "$rc"; }
+    [[ $rc -eq 0 ]] || { echo "run_b2.sh: $schema $graph measurement exited $rc" >&2; exit "$rc"; }
     echo
   done
 done
+done
 
-echo "## Falsification — each mutation of step 2 must exit 1 with MISMATCH, on each schema"
+echo "## Falsification — each mutation (of step 2; readkey: of step 5) must exit 1 with MISMATCH, on each schema and graph"
 echo
-echo "| schema | mutation | applied | exit | verdict |"
-echo "|---|---|---|---:|---|"
+echo "| schema | graph | mutation | applied | exit | verdict |"
+echo "|---|---|---|---|---:|---|"
 bad=0
 n=0
+for graph in default wide; do
 for schema in trades mbo; do
   dbn=$trades; [[ $schema == mbo ]] && dbn=$mbo
-  for kind in ulp drop swap store; do
-    out="$tmp/falsify-$schema-$kind.txt"
-    "$bin" --dbn "$dbn" --iterations 3 --warmup 0 --falsify="$kind" >"$out" 2>&1
+  for kind in ulp drop swap store readkey; do
+    out="$tmp/falsify-$graph-$schema-$kind.txt"
+    "$bin" --dbn "$dbn" --iterations 3 --warmup 0 --graph="$graph" --falsify="$kind" >"$out" 2>&1
     frc=$?
     applied=$(sed -n 's/^falsify: applied — //p' "$out")
     if [[ $frc -eq 1 && -n "$applied" ]] && grep -q '^MISMATCH' "$out"; then
@@ -79,9 +84,10 @@ for schema in trades mbo; do
       verdict="DID NOT FAIL"; bad=1
       sed 's/^/    /' "$out" >&2
     fi
-    echo "| $schema | $kind | ${applied:-NOT APPLIED} | $frc | $verdict |"
+    echo "| $schema | $graph | $kind | ${applied:-NOT APPLIED} | $frc | $verdict |"
   done
+done
 done
 [[ $bad -eq 0 ]] || { echo "run_b2.sh: a falsification did not turn the verdict red" >&2; exit 1; }
 echo
-echo "run_b2.sh: steps 1-3 byte-identical on trades and mbo; $n of 8 falsifications red"
+echo "run_b2.sh: steps 1-3 and 5 byte-identical under their contracts on trades and mbo, both graphs; $n of 20 falsifications red"
