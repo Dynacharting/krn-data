@@ -870,7 +870,8 @@ truncated := limit != 0  AND  records == limit
                     [requested_start, requested_end)   otherwise
 ```
 
-Two clauses are deliberate:
+Both paths compute it with one function, `csv::deliveredWindow`
+(`data/include/krn/data/DatabentoCsv.hpp`). Three clauses are deliberate:
 
 - **`from_ts` is the requested start, not the first record's `ts_event`.** The vendor
   delivers everything from `start`, so a quiet opening second is data.
@@ -878,6 +879,12 @@ Two clauses are deliberate:
   a group of records sharing one instant (ten of the sample's `mbo` records carry its last
   `ts_event`), and the file cannot say whether it did. So the possibly-partial final instant
   is left out of the *claim* while its rows are still inserted.
+- **`records` and `last_ts_event` count records, not canonical rows.** The vendor's `limit`
+  counts records, so the cut falls after the last record whatever its action. An `mbo`
+  record with action `N` ("no effect on the book") is delivered and counted but yields no
+  canonical row. Its `ts_event` is still the end of the delivered prefix, and the interval
+  it adds is one in which the book did not change. Taking the last *row* instead would
+  claim less than `records == limit` says was delivered (ENC-1636).
 
 Where each input comes from:
 
@@ -889,21 +896,29 @@ Where each input comes from:
   (`RepeatedTimestampsAreNotADescent`).
 - **`reload` (from DBN only).** The same three fields come from the retained DBN's metadata
   block. Truncation is detectable on a reload only because the encoder writes `limit` into
-  that block. `records` is the count of DBN records decoded, and `last_ts_event` is the
-  largest `ts_event` over the decoded canonical rows (`data/src/IngestJob.cpp`). **This
-  differs from `ingest`**, which takes the last CSV record's `ts_event`. An `mbo` record with
-  action `N` yields no canonical row, so on a truncated `mbo` pull ending in such records a
-  reload records a smaller `to_ts` than the ingest did. That is a different recorded window,
-  and the original one, which intersects the dropped day, gets a `state = 3` row (§8.6). No
-  test drives the reload path.
+  that block. `records` is the count of DBN records the adapter framed and `last_ts_event`
+  is the `ts_event` of the last one (`DatabentoAdapter::Stats`), so an action-`N` record
+  counts on this path exactly as on `ingest`. A descending `ts_event` in the retained file is
+  refused, as the transcoder refuses one in the CSV. On `ingest` the job also checks that the
+  CSV's count and last `ts_event` equal what the decoder read from the retained DBN.
+  **The two paths record the same window for the same input.** Until ENC-1636 the reload
+  took the largest `ts_event` over canonical rows, so a truncated `mbo` pull ending in an
+  action-`N` record reloaded to a smaller `to_ts`, a different window, and the reload's own
+  `DROP PARTITION` then wrote `state = 3` on the window the ingest had recorded (§8.6).
 
-The truncation tests, all on the CSV path, are `RecordsEqualToTheLimitMeansThePullWasCut`,
+The truncation tests on the CSV path are `RecordsEqualToTheLimitMeansThePullWasCut`,
 `FewerRecordsThanTheLimitClaimsTheWholeRequest`, `NoLimitIsNeverTruncated` and
-`RecordsSharingTheLastInstantAreCounted`. Through the job, the test is
-`TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne`, and all of them are in
-`data/tests/DatabentoCsvTest.cpp`. An empty CSV is refused by the transcoder
+`RecordsSharingTheLastInstantAreCounted`; `deliveredWindow` alone is
+`TheRecordedWindowIsOneFunctionOfRequestLimitAndLastRecord`. Through the job:
+`TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne` (`ingest`),
+`IngestAndReloadRecordTheSameWindowWhenATruncatedPullEndsInActionNone` (both paths, the
+parity), `AReloadReadsItsWindowFromTheRetainedDbnAlone` (`reload` with every CSV and
+metadata file removed) and `AReloadRefusesARetainedDbnWhoseTsEventDescends`. All of them are
+in `data/tests/DatabentoCsvTest.cpp`. An empty CSV is refused by the transcoder
 (`AnEmptyPullIsRefusedRatherThanRecordedAsAWindow`). Separately, the job refuses to write any
-recorded window that comes out empty (`to_ts <= from_ts`), a check that no test reaches.
+recorded window that comes out empty (`to_ts <= from_ts`), for example a truncated pull
+whose every record sits at the requested start, on both paths
+(`AnEmptyRecordedWindowIsRefusedOnIngestAndOnReload`).
 
 #### A hazard the schema cannot close, and the one count that is admissible
 
