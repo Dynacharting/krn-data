@@ -800,7 +800,7 @@ arrow::Status DatabentoAdapter::onMbo(const dbn::MboMsg& m) {
     // Pick by action, not by a variable mutated earlier — see the long note
     // above. Every row names the resting side; only a print has a taker.
     r.side      = resting;
-    r.aggressor = aggressor;
+    r.aggressor = action == BookAction::Trade ? aggressor : Aggressor::Unknown;
     r.price    = price;
     r.size     = size;
     r.orderId  = m.orderId;
