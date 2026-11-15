@@ -50,7 +50,7 @@ trap 'rm -rf "$tmp"' EXIT
 for schema in trades mbo; do
   dbn=$trades; [[ $schema == mbo ]] && dbn=$mbo
   for threads in hw 1; do
-    echo "## B2 steps 1-2, $schema — pool threads = $([[ $threads == hw ]] && echo "hardware_concurrency (Host's default)" || echo 1)"
+    echo "## B2 steps 1-3, $schema — pool threads = $([[ $threads == hw ]] && echo "hardware_concurrency (Host's default)" || echo 1)"
     echo
     targs=(); [[ $threads == 1 ]] && targs=(--threads 1)
     "$bin" --dbn "$dbn" --iterations "$iters" --warmup "$warm" "${targs[@]}"
@@ -84,4 +84,4 @@ for schema in trades mbo; do
 done
 [[ $bad -eq 0 ]] || { echo "run_b2.sh: a falsification did not turn the verdict red" >&2; exit 1; }
 echo
-echo "run_b2.sh: steps 1-2 byte-identical on trades and mbo; $n of 8 falsifications red"
+echo "run_b2.sh: steps 1-3 byte-identical on trades and mbo; $n of 8 falsifications red"

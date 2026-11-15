@@ -33,9 +33,26 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # A full 40-character commit of Dynacharting/krn master. Bumping it is a
 # one-line diff here; KRN_DATA_KRN_TARGETS is what the engine defines in
 # consumed mode at that commit, and changes in the same diff when it changes.
-set(KRN_DATA_KRN_REPOSITORY "https://github.com/Dynacharting/krn.git")
-set(KRN_DATA_KRN_COMMIT     "b8ff34d7d7d6fec4777389a8aa4322ea235c9aef")
-set(KRN_DATA_KRN_TARGETS    krn_engine krn_host krn_plugin_reference)
+set(_kd_pin_repository "https://github.com/Dynacharting/krn.git")
+set(_kd_pin_commit     "eda2dc48261acf5b276aa82a29146128b98b54c5")
+set(KRN_DATA_KRN_TARGETS krn_engine krn_host krn_plugin_reference)
+
+# ENC-1633. -DKRN_DATA_KRN_COMMIT=<sha> (and -DKRN_DATA_KRN_REPOSITORY=<url>)
+# measure another engine commit without editing this file. The fetch checks
+# in cmake/KrnEngine.cmake still apply to the override. The defaults are
+# deliberately NOT cache entries: a cached default would survive a pin bump in
+# an existing build tree. A -D value is cached, so it sticks to that build
+# tree until `-U KRN_DATA_KRN_COMMIT`, and every configure says so.
+foreach (_kd_v IN ITEMS REPOSITORY COMMIT)
+  string(TOLOWER "${_kd_v}" _kd_lc)
+  if (DEFINED KRN_DATA_KRN_${_kd_v} AND NOT KRN_DATA_KRN_${_kd_v} STREQUAL _kd_pin_${_kd_lc})
+    message(WARNING
+      "krn-data: KRN_DATA_KRN_${_kd_v} overridden to '${KRN_DATA_KRN_${_kd_v}}'; "
+      "the repository pins '${_kd_pin_${_kd_lc}}'. Clear it with -U KRN_DATA_KRN_${_kd_v}.")
+  elseif (NOT DEFINED KRN_DATA_KRN_${_kd_v})
+    set(KRN_DATA_KRN_${_kd_v} "${_kd_pin_${_kd_lc}}")
+  endif()
+endforeach()
 
 include("${PROJECT_SOURCE_DIR}/cmake/KrnEngine.cmake")
 

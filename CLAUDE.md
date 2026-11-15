@@ -29,7 +29,7 @@ The fetched engine needs RapidJSON and Boost; with no system package, pass
 | `KRN_DATA_BUILD_BENCHMARKS` | `OFF` | build `krn_b2_bench` (ENC-1487, B2 rows/sec per step) and `krn_b1_transport` (ENC-1485, B1; fetches clickhouse-cpp v2.6.2, which uses Arrow's lz4); never ctest cases |
 
 B2: configure `-DCMAKE_BUILD_TYPE=Release -DKRN_DATA_BUILD_BENCHMARKS=ON`, then
-`data/bench/run_b2.sh build` prints the step table over the retained trades DBN
+`data/bench/run_b2.sh build` prints the step table (steps 1-3; step 3 is the engine's `inlineDagDrive`, ENC-1625) over the retained trades DBN
 (`KRN_B2_TRADES_DBN`) and, as a separate data point, the mbo DBN (`KRN_B2_MBO_DBN`;
 BookRecords through `BookRecordFieldSource`, ENC-1628), and asserts that each
 `--falsify` mutation turns the bit-identical check red on each. Exit 0 identical, 1 a
@@ -59,6 +59,11 @@ mode at that commit. `cmake/KrnEngine.cmake` fetches it and fails the configure 
 
 A bump is one diff: the new SHA, plus `KRN_DATA_KRN_TARGETS` if the engine's consumed-mode
 targets changed at it.
+
+`-DKRN_DATA_KRN_COMMIT=<sha>` and `-DKRN_DATA_KRN_REPOSITORY=<url>` override the pin for one
+build tree (ENC-1633), and every check above still applies to the override. The value is
+cached in that tree, so it sticks until `-U KRN_DATA_KRN_COMMIT`; every configure prints a
+warning naming the override and the repository's pin.
 
 krn-data does not depend on `krn-common` (SPEC D9, amended). If it ever does, the edge
 runs krn-data → krn-common, never the reverse.
