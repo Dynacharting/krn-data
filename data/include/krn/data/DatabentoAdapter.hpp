@@ -261,8 +261,8 @@ enum class Action : char {
 };
 
 // "The side of the market for resting orders, or the side of the aggressor for
-// trades." THREE-VALUED: `krn::data::Side` has only Bid and Ask, so `None` has
-// no representation there — see `kKrnFlagSideUnspecified`.
+// trades." THREE-VALUED, and so is `krn::data::Side` since ENC-1494: `None`
+// maps to `Side::None` / `Aggressor::Unknown`, not to a flag bit.
 enum class Side : char {
   Ask  = 'A',  // "A sell order or sell aggressor in a trade."
   Bid  = 'B',  // "A buy order or a buy aggressor in a trade."
@@ -385,26 +385,17 @@ struct Metadata {
 }  // namespace dbn
 
 // ===========================================================================
-// krn-side flag bits
+// krn-side flag bits: none
 // ===========================================================================
 //
 // `TickRecord::flags` and `BookRecord::flags` are `uint16` and DBN's own flags
-// are a single byte, so 0xFF00 is headroom rather than an invention. One bit is
-// used, and it exists because of a REAL GAP in ENC-1481's schema rather than
-// for convenience:
-//
-//   `BookRecord::side` is `data::Side{Bid, Ask}` and `krn.book_events.side` is
-//   its UInt8. DBN's `Side` is three-valued, and `Side::None` is normal on a
-//   `Trade` record from a venue that does not report an aggressor. There is
-//   nowhere in `BookRecord` to put "no side" — `TickRecord` is fine because
-//   `Aggressor::Unknown` exists, but `BookRecord` has no aggressor field.
-//
-// So a `Trade`/`Fill` row whose DBN side was 'N' carries this bit and leaves
-// `side` at its default. The recommended fix is upstream of this file and is
-// reported with the ticket: `BookRecord` should carry an `Aggressor` for
-// `BookAction::Trade` rows, or `side` should mirror DBN's three values. Until
-// then this bit is the lossless answer and is asserted in the tests.
-inline constexpr std::uint16_t kKrnFlagSideUnspecified = 0x0100;
+// are a single byte, so the adapter writes the DBN byte and nothing else; the
+// high byte is always 0. Until ENC-1494 bit 0x0100 (`kKrnFlagSideUnspecified`)
+// marked a row whose DBN side was 'N', because `BookRecord::side` had only Bid
+// and Ask and left such a row reading as a bid. `Side::None` and
+// `BookRecord::aggressor` replaced it, and the bit is retired rather than
+// reused: an L1 loaded before ENC-1494 still holds it on those rows until it is
+// reloaded (docs/data-layer.md §8.4).
 
 // ===========================================================================
 // DatabentoAdapter
@@ -478,7 +469,7 @@ class DatabentoAdapter {
     std::uint64_t clears         = 0;   // Action::Clear, i.e. epoch bumps
     std::uint64_t unknownOrder   = 0;   // Cancel/Modify/Fill for an unseen order_id
     std::uint64_t evictedOrders  = 0;   // maxTrackedOrders pressure
-    std::uint64_t sideUnspecified= 0;   // DBN side 'N' on a book row
+    std::uint64_t sideUnspecified= 0;   // DBN side 'N' on an mbo or trades record
     std::uint64_t undefPrice     = 0;   // kUndefPrice -> kNoPrice
     std::uint64_t undefSize      = 0;   // kUndefOrderSize seen
   };
