@@ -385,11 +385,22 @@ std::string formatWindow(std::int64_t fromNs, std::int64_t toNs) {
 
 std::vector<RecordedWindow> invalidationTargets(
     const std::vector<RecordedWindow>& intersecting,
-    const std::string& ownSymbol, std::int64_t /*ownFromNs*/,
-    std::int64_t /*ownToNs*/) {
+    const std::string& ownSymbol, std::int64_t ownFromNs,
+    std::int64_t ownToNs) {
+  // Every intersecting window except the one being re-ingested, which its own
+  // state=0 and then state=1 resolve. The own symbol's OTHER windows are in:
+  // the partition holds their rows too, the reload puts back only this
+  // window's, and before ENC-1635 they kept state=1 over deleted rows.
+  //
+  // state=3 and not a re-recorded state=1: this job reloads one DBN, so a
+  // state=1 on another window would claim rows nobody reinserted. Where this
+  // window's range does contain the other one, the read rule's union still
+  // covers it through this window, so state=3 is never short (§8.6).
   std::vector<RecordedWindow> out;
   for (const auto& w : intersecting) {
-    if (w.symbol != ownSymbol) out.push_back(w);
+    const bool own = w.symbol == ownSymbol && w.fromTsNs == ownFromNs &&
+                     w.toTsNs == ownToNs;
+    if (!own) out.push_back(w);
   }
   return out;
 }
@@ -878,15 +889,16 @@ arrow::Result<Report> run(const Options& opts) {
     // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
     //
     // From the warning block in clickhouse.sql: a DROP PARTITION invalidates
-    // EVERY symbol's completeness rows for that partition, not only the symbol
-    // being re-ingested, because partitions are day-granular while completeness
-    // is per symbol. Without this step another symbol's newest row still reads
-    // state=1 over an emptied partition, and isComplete returns true over
-    // nothing.
+    // EVERY recorded window's completeness rows for that partition, not only
+    // the window being re-ingested, because partitions are day-granular while
+    // completeness is per (symbol, window). Without this step another window's
+    // newest row still reads state=1 over an emptied partition, and isComplete
+    // returns true over nothing.
     //
-    // So before dropping: every OTHER symbol with a recorded window for this
-    // kind intersecting a partition about to go gets a state=3 (invalidated)
-    // row. Our own symbol gets the state=0 below, which covers it.
+    // So before dropping: every recorded window of this kind intersecting a
+    // partition about to go gets a state=3 (invalidated) row, our own symbol's
+    // other windows included (ENC-1635). Only the window being written is
+    // left out; the state=0 below covers it. `invalidationTargets` decides.
     for (const std::uint32_t day : days) {
       const auto dayFrom = static_cast<std::int64_t>(csv::midnightUtcNs(day));
       const std::int64_t dayTo = dayFrom + 86400000000000LL;
