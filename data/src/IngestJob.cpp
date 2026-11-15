@@ -820,6 +820,33 @@ arrow::Result<Report> run(const Options& opts) {
     return rep;
   }
 
+  // ---- preflight: the table holds every column the INSERT names ---------
+  //
+  // Before ANY write. An L1 created before a column was added (ENC-1494's
+  // `book_events.aggressor`) refuses the INSERT, but only after the DROP
+  // PARTITION below has emptied the day: measured, the job exited 2 with the
+  // window at state=2 and book_events at 0 rows. Recoverable by reload, and
+  // never reported complete, but it destroyed data it could have refused to
+  // touch. `apply.py verify` names the drift; this makes the job say so first.
+  for (const auto& st : staged) {
+    std::string q = "SELECT ";
+    q += st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns;
+    q += " FROM krn.";
+    q += st.table;
+    q += " LIMIT 0 FORMAT TabSeparated";
+    const auto probe = client.select(q);
+    if (!probe.ok()) {
+      return arrow::Status::Invalid(
+          "krn.", st.table, " does not hold every column this build inserts (",
+          st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns,
+          "): ", probe.status().message(),
+          "\nNothing has been dropped or written. The table predates this "
+          "build's schema: `data/schema/apply.py verify` names the difference, "
+          "and the remedy is re-creating the table from clickhouse.sql and "
+          "reloading from the retained DBN (docs/data-layer.md §8.4).");
+    }
+  }
+
   // ---- pass 2: drop, insert, record -------------------------------------
   for (auto& st : staged) {
     // Day partitions this kind's rows land in, plus the recorded window's own

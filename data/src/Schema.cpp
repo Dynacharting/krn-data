@@ -239,7 +239,7 @@ arrow::Result<const ArrayType*> column(const arrow::RecordBatch& batch,
 // following), and they catch any out-of-domain wire value, which is what the
 // check is actually for.
 inline constexpr std::uint8_t kMaxSideValue =
-    static_cast<std::uint8_t>(Side::Ask);
+    static_cast<std::uint8_t>(Side::None);
 // A snapshot LEVEL is always on one side of the book, so `Side::None` is out
 // of its domain even though it is a legal `book_events.side` (ENC-1494).
 inline constexpr std::uint8_t kMaxLevelSideValue =
