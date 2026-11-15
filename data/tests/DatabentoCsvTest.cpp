@@ -509,7 +509,8 @@ TEST(DatabentoCsvTranscode, TheOutputDecodesThroughTheRealAdapter) {
   EXPECT_EQ(book[1].size, 6u);
 
   EXPECT_EQ(book[2].action, BookAction::Trade);
-  EXPECT_EQ(book[2].side, Side::Ask) << "a `trades`-style T names the aggressor";
+  EXPECT_EQ(book[2].aggressor, Aggressor::Sell) << "a T's DBN side 'A' is the taker";
+  EXPECT_EQ(book[2].side, Side::Bid) << "so the resting side is the BID";
 }
 
 TEST(DatabentoCsvTranscode, ATradesCsvDecodesToBookNeutralTicks) {

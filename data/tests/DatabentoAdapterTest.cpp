@@ -360,6 +360,7 @@ TEST_P(DbnFixtureTest, MboDecodesToTheVendorsValues) {
     EXPECT_EQ(got.header.venueId, venue);
     EXPECT_EQ(got.action, BookAction::Delete);
     EXPECT_EQ(got.side, Side::Ask);
+    EXPECT_EQ(got.aggressor, Aggressor::Unknown) << "a mutation has no taker";
     EXPECT_EQ(got.price, want.price);
     EXPECT_EQ(got.size, want.size);
     EXPECT_EQ(got.orderId, want.orderId);
@@ -592,19 +593,22 @@ TEST(DbnActionMappingTest, EveryDeclaredSideIsAccepted) {
     ASSERT_TRUE(st.ok()) << st.ToString();
     ASSERT_EQ(h.a->bookEvents().size(), 1u);
     const BookRecord& r = h.a->bookEvents()[0];
+    // The flags column is DBN's byte and nothing else: "no side" is a value
+    // of `side`, not a bit (ENC-1494 retired 0x0100).
+    EXPECT_EQ(r.flags & 0xFF00, 0);
+    EXPECT_EQ(r.aggressor, Aggressor::Unknown) << "an Add has no taker";
     switch (s) {
       case dbn::Side::Bid:
         EXPECT_EQ(r.side, Side::Bid);
-        EXPECT_EQ(r.flags & kKrnFlagSideUnspecified, 0);
+        EXPECT_EQ(h.a->stats().sideUnspecified, 0u);
         break;
       case dbn::Side::Ask:
         EXPECT_EQ(r.side, Side::Ask);
-        EXPECT_EQ(r.flags & kKrnFlagSideUnspecified, 0);
+        EXPECT_EQ(h.a->stats().sideUnspecified, 0u);
         break;
       case dbn::Side::None:
-        // data::Side has no third value, so the gap is flagged rather than
-        // flattened onto Bid without a trace.
-        EXPECT_NE(r.flags & kKrnFlagSideUnspecified, 0);
+        // Explicit, not flattened onto Bid.
+        EXPECT_EQ(r.side, Side::None);
         EXPECT_EQ(h.a->stats().sideUnspecified, 1u);
         break;
     }
@@ -797,32 +801,77 @@ TEST(DbnActionMappingTest, FillMutatesTheBookOnlyWhenConfiguredTo) {
   EXPECT_FALSE(h.a->restingSize(kIid, 5).has_value());
 }
 
-TEST(DbnActionMappingTest, ATradeSideIsTheAggressorAndAFillSideIsFlipped) {
+TEST(DbnActionMappingTest, APrintCarriesTheRestingSideAndItsOwnAggressor) {
   // DBN: side is "the side of the market for RESTING orders, or the side of
-  // the AGGRESSOR for trades". A Fill names the resting order, so the
-  // aggressor is the opposite — ItchAdapter::routeOrderExecuted's
-  // "The resting order's side is passive; the aggressor is the opposite".
-  // Not flipping would put two different meanings in one column.
+  // the AGGRESSOR for trades". So a `T` names the taker and a `F` names the
+  // resting order, and each derives the other — ItchAdapter::
+  // routeOrderExecuted's "The resting order's side is passive; the aggressor
+  // is the opposite". Since ENC-1494 the row carries BOTH, one per column:
+  // `side` the resting side, `aggressor` the taker.
   DbnWriter w = plainWriter();
   w.addMbo(mbo(static_cast<char>(dbn::Action::Trade),
                static_cast<char>(dbn::Side::Bid), 0, 1'000'000'000LL, 1, 1));
+  w.addMbo(mbo(static_cast<char>(dbn::Action::Trade),
+               static_cast<char>(dbn::Side::Ask), 0, 1'000'000'000LL, 1, 2));
   w.addMbo(mbo(static_cast<char>(dbn::Action::Fill),
-               static_cast<char>(dbn::Side::Bid), 1, 1'000'000'000LL, 1, 2));
+               static_cast<char>(dbn::Side::Bid), 1, 1'000'000'000LL, 1, 3));
   w.addMbo(mbo(static_cast<char>(dbn::Action::Fill),
-               static_cast<char>(dbn::Side::Ask), 2, 1'000'000'000LL, 1, 3));
+               static_cast<char>(dbn::Side::Ask), 2, 1'000'000'000LL, 1, 4));
+  w.addMbo(mbo(static_cast<char>(dbn::Action::Trade),
+               static_cast<char>(dbn::Side::None), 0, 1'000'000'000LL, 1, 5));
 
   Harness h;
   ASSERT_TRUE(h.run(w).ok());
-  ASSERT_EQ(h.a->bookEvents().size(), 3u);
-  EXPECT_EQ(h.a->bookEvents()[0].side, Side::Bid) << "a Trade already names the aggressor";
-  EXPECT_EQ(h.a->bookEvents()[1].side, Side::Ask) << "a Fill on a resting BID is a SELL";
-  EXPECT_EQ(h.a->bookEvents()[2].side, Side::Bid) << "a Fill on a resting ASK is a BUY";
+  const auto& b = h.a->bookEvents();
+  ASSERT_EQ(b.size(), 5u);
+  for (const BookRecord& r : b) EXPECT_EQ(r.action, BookAction::Trade);
+
+  EXPECT_EQ(b[0].aggressor, Aggressor::Buy)  << "T/B: the taker is a BUY";
+  EXPECT_EQ(b[0].side, Side::Ask)            << "T/B: a buyer lifts the ASK";
+  EXPECT_EQ(b[1].aggressor, Aggressor::Sell) << "T/A: the taker is a SELL";
+  EXPECT_EQ(b[1].side, Side::Bid)            << "T/A: a seller hits the BID";
+  EXPECT_EQ(b[2].side, Side::Bid)            << "F/B: the resting order is a BID";
+  EXPECT_EQ(b[2].aggressor, Aggressor::Sell) << "F/B: so the taker is a SELL";
+  EXPECT_EQ(b[3].side, Side::Ask)            << "F/A: the resting order is an ASK";
+  EXPECT_EQ(b[3].aggressor, Aggressor::Buy)  << "F/A: so the taker is a BUY";
+  // No side reported: nothing is derived from nothing.
+  EXPECT_EQ(b[4].side, Side::None);
+  EXPECT_EQ(b[4].aggressor, Aggressor::Unknown);
+  EXPECT_EQ(h.a->stats().sideUnspecified, 1u);
+  for (const BookRecord& r : b) EXPECT_EQ(r.flags & 0xFF00, 0);
+}
+
+TEST(DbnActionMappingTest, BothRowsOfOneExecutionAgree) {
+  // The real sample's shape (ENC-1494): every `T` with a side is followed by
+  // an `F` for the same execution — same ts_event, sequence, price and size —
+  // whose side is the `T`'s opposite (91 of 91 pairs on XNAS.ITCH MSFT
+  // 2022-06-10). The two DBN records say the same thing from opposite ends,
+  // so the two rows must come out IDENTICAL in side and aggressor. Before
+  // ENC-1494 they agreed only because both carried the aggressor in `side`.
+  for (const char taker : {static_cast<char>(dbn::Side::Bid),
+                           static_cast<char>(dbn::Side::Ask)}) {
+    SCOPED_TRACE(dbn::sideName(taker));
+    const char rester = taker == static_cast<char>(dbn::Side::Bid)
+                            ? static_cast<char>(dbn::Side::Ask)
+                            : static_cast<char>(dbn::Side::Bid);
+    DbnWriter w = plainWriter();
+    w.addMbo(mbo(static_cast<char>(dbn::Action::Trade), taker, 0, 1'000'000'000LL, 14, 9));
+    w.addMbo(mbo(static_cast<char>(dbn::Action::Fill), rester, 7, 1'000'000'000LL, 14, 9));
+    Harness h;
+    ASSERT_TRUE(h.run(w).ok());
+    const auto& b = h.a->bookEvents();
+    ASSERT_EQ(b.size(), 2u);
+    EXPECT_EQ(b[0].side, b[1].side);
+    EXPECT_EQ(b[0].aggressor, b[1].aggressor);
+    EXPECT_NE(b[0].side, Side::None);
+    EXPECT_NE(b[0].aggressor, Aggressor::Unknown);
+  }
 }
 
 TEST(DbnActionMappingTest, EveryBookMutationRowCarriesTheRestingSide) {
-  // The column `BookRecord::side` holds TWO meanings — the resting order's side
-  // on Add/Update/Delete/Clear, the aggressor's on a Trade row (see the header).
-  // A column with two meanings needs every row asserted, or the meanings swap
+  // `BookRecord::side` is the RESTING side on every row and `aggressor` is the
+  // taker on a Trade row only (ENC-1494; before it, `side` held both meanings).
+  // Every row is asserted, or a meaning leaks from one column into the other
   // silently. `ItchAdapter` is structurally incapable of this bug: its mutation
   // events (`ObDeleteEvent{symbol, orderRef}`,
   // `ObUpdateEvent{symbol, orderRef, nullopt, remaining}`) carry no side at all
@@ -836,8 +885,9 @@ TEST(DbnActionMappingTest, EveryBookMutationRowCarriesTheRestingSide) {
 
   for (const char restingSide : {bid, ask}) {
     SCOPED_TRACE(dbn::sideName(restingSide));
-    const Side wantResting  = restingSide == bid ? Side::Bid : Side::Ask;
-    const Side wantAggressor = restingSide == bid ? Side::Ask : Side::Bid;
+    const Side wantResting = restingSide == bid ? Side::Bid : Side::Ask;
+    const Aggressor wantAggressor =
+        restingSide == bid ? Aggressor::Sell : Aggressor::Buy;
 
     DbnWriter w = plainWriter();
     w.addMbo(mbo(static_cast<char>(dbn::Action::Add), restingSide, 1,
@@ -862,14 +912,16 @@ TEST(DbnActionMappingTest, EveryBookMutationRowCarriesTheRestingSide) {
     for (std::size_t i = 0; i < h.a->bookEvents().size(); ++i) {
       const BookRecord& r = h.a->bookEvents()[i];
       SCOPED_TRACE(static_cast<int>(r.action));
+      EXPECT_EQ(r.side, wantResting)
+          << "row " << i << ": action " << static_cast<int>(r.action)
+          << " must carry the RESTING side, not the aggressor the Fill print "
+             "needs";
       if (r.action == BookAction::Trade) {
-        EXPECT_EQ(r.side, wantAggressor)
-            << "row " << i << ": a Trade row carries the AGGRESSOR side";
+        EXPECT_EQ(r.aggressor, wantAggressor)
+            << "row " << i << ": a Trade row carries the taker in `aggressor`";
       } else {
-        EXPECT_EQ(r.side, wantResting)
-            << "row " << i << ": action " << static_cast<int>(r.action)
-            << " is a book MUTATION and must carry the RESTING side, not the "
-               "aggressor the Fill print needs";
+        EXPECT_EQ(r.aggressor, Aggressor::Unknown)
+            << "row " << i << ": a book MUTATION has no taker";
       }
     }
   }
@@ -1487,6 +1539,7 @@ TEST(DbnBatchTest, FixturesBecomeCanonicalBatchesThatRoundTrip) {
     EXPECT_EQ(back[i].orderId, mboH.a->bookEvents()[i].orderId);
     EXPECT_EQ(back[i].action, mboH.a->bookEvents()[i].action);
     EXPECT_EQ(back[i].side, mboH.a->bookEvents()[i].side);
+    EXPECT_EQ(back[i].aggressor, mboH.a->bookEvents()[i].aggressor);
     EXPECT_EQ(back[i].flags, mboH.a->bookEvents()[i].flags);
   }
 
