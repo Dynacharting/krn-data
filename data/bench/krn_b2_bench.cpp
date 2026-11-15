@@ -11,7 +11,7 @@
 // engine's Dispatcher into a NON-WINDOWED graph built by the engine's own
 // TreeBuilder (D9: nothing here waits on a clock, so nothing needs event time).
 // Each STEP is one way of getting a record into the Dispatcher. Steps 1-3
-// exist at the pinned engine commit:
+// and 5 exist at the pinned engine commit:
 //
 //   1. json-ontick   today's JSON path: a rapidjson DOM synthesized per record
 //                    (the equivalent tick RecordFieldSource defines), then
@@ -22,6 +22,13 @@
 //                    each request DAG gets an inline strand, so the graph runs
 //                    on the ingress thread with no `ThreadPool::post` between
 //                    nodes.
+//   5. store-elide   step 3 with krn's `Config::storeWriteElision` on too
+//                    (ENC-1627): raw fields and builtins are written only to
+//                    keys an AtomicAccessor declared. Cumulative over step 3,
+//                    because step 4 does not exist at the pin; its own effect
+//                    is the difference from step 3. Contract: deliveries and
+//                    every declared key byte-identical, and STRICTLY fewer
+//                    store entries than the reference.
 //
 // ONE DATA POINT PER FILE, chosen by what the file decodes to (ENC-1628):
 //
@@ -37,8 +44,8 @@
 // points are separate runs with separate references and are never summed:
 // docs/data-layer.md §C13, the same execution is in both files.
 //
-// Steps 4-5 (interned symbols, store-write elision) are engine changes in krn
-// and are NOT implemented here. Each plugs in as one more
+// Step 4 (interned symbols) is an engine change in krn that does not exist at
+// the pin, so it is NOT implemented here. It plugs in as one more
 // entry in `steps()` below: a `configure` hook for whatever engine knob the
 // step introduces, an `ingest` call, and an `OutputContract` saying what it
 // must reproduce byte-for-byte. Nothing else in the harness changes.
@@ -147,7 +154,33 @@ struct RequestSpec {
   const char* json;
 };
 
-const std::vector<RequestSpec>& requests() {
+// ENC-1627 — `--graph=wide`: the default graph plus push Listeners on seven
+// more builtins. Each is computed and pushed; with elision off each is also
+// stored under a key nothing reads back, which is the shape step 5 exists for
+// (the default graph's store holds only 4 keys, 2 of them read).
+bool gWideGraph = false;
+
+const std::vector<RequestSpec>& defaultRequests();
+const std::vector<RequestSpec>& wideRequests() {
+  static const std::vector<RequestSpec> r = [] {
+    std::vector<RequestSpec> v = defaultRequests();
+    v.insert(v.end(), {
+        {"sum",      R"({"key":101,"streamKey":"%S","field":"sum"})"},
+        {"min",      R"({"key":102,"streamKey":"%S","field":"min"})"},
+        {"max",      R"({"key":103,"streamKey":"%S","field":"max"})"},
+        {"median",   R"({"key":104,"streamKey":"%S","field":"median"})"},
+        {"variance", R"({"key":105,"streamKey":"%S","field":"variance"})"},
+        {"range",    R"({"key":106,"streamKey":"%S","field":"range"})"},
+        {"count",    R"({"key":107,"streamKey":"%S","field":"count"})"},
+    });
+    return v;
+  }();
+  return r;
+}
+
+const std::vector<RequestSpec>& requests() { return gWideGraph ? wideRequests() : defaultRequests(); }
+
+const std::vector<RequestSpec>& defaultRequests() {
   static const std::vector<RequestSpec> r = {
       {"raw",    R"({"key":1,"streamKey":"%S","field":"price"})"},
       {"mean",   R"({"key":2,"streamKey":"%S","field":"mean"})"},
@@ -258,6 +291,12 @@ struct RunOutput {
   std::vector<CaptureSink::Capture> perRequest;  // indexed like requests()
   std::string                       storeBytes;  // sorted AtomicStore snapshot
   std::size_t                       storeEntries = 0;
+  // ENC-1627: the store restricted to the keys pull nodes declared
+  // (AtomicStore::readKeys), and how many of those keys hold a value.
+  std::string                       readKeyBytes;
+  std::size_t                       readKeys = 0;
+  std::size_t                       readKeysPresent = 0;
+  bool                              readsSealed = false;
 };
 
 std::string encodeStore(const AtomicStore& store, std::size_t& entries) {
@@ -315,6 +354,15 @@ struct Rig {
     RunOutput out;
     for (auto& s : sinks) out.perRequest.push_back(s->take());
     out.storeBytes = encodeStore(store, out.storeEntries);
+    const auto keys = store.readKeys();
+    out.readKeys = keys.size();
+    for (const auto& [k, f] : keys) {
+      putStr(out.readKeyBytes, k);
+      putStr(out.readKeyBytes, f);
+      if (auto v = store.get(k, f)) { encode(out.readKeyBytes, *v); ++out.readKeysPresent; }
+      else out.readKeyBytes.push_back(static_cast<char>(0xFF));  // absent: no ArgType index is 0xFF
+    }
+    out.readsSealed = store.readsSealed();
     return out;
   }
 
@@ -326,9 +374,9 @@ struct Rig {
 };
 
 // ---------------------------------------------------------------------------
-// Falsification. Applied to step 2 only; each must turn the verdict red.
+// Falsification. Applied to step 2 (readkey: step 5); each must turn the verdict red.
 // ---------------------------------------------------------------------------
-enum class Falsify { None, Ulp, Drop, Swap, Store };
+enum class Falsify { None, Ulp, Drop, Swap, Store, ReadKey };
 
 struct FalsifyState {
   Falsify     kind = Falsify::None;
@@ -415,11 +463,15 @@ std::vector<std::pair<std::string, double>> fieldsOf(const Rec& r) {
 struct OutputContract {
   // Every terminal's delivery stream, in order, byte-for-byte. Steps 1-5 all.
   bool deliveries = true;
-  // The AtomicStore's final contents, byte-for-byte. True for steps 1-4.
-  // Step 5 (store-write elision) legitimately writes fewer keys; its contract
-  // will be "every key a pull node reads is identical", which needs the
-  // engine's notion of which keys those are.
+  // The AtomicStore's final contents, byte-for-byte. True for steps 1-3.
+  // Step 5 (store-write elision) legitimately writes fewer keys, so it is
+  // judged on `readKeys` (every key a pull node declared) and `fewerKeys`.
   bool store = true;
+  // ENC-1627: every key a pull node declared, byte-for-byte. Steps 1-5 all.
+  bool readKeys = true;
+  // ENC-1627: step 5 must hold STRICTLY fewer store entries than the
+  // reference, or elision was not in force and the row measures nothing.
+  bool fewerKeys = false;
 };
 
 template <typename Rec>
@@ -508,7 +560,38 @@ const std::vector<StepSpec<Rec>>& steps() {
        },
        {}},
       // 4 interned    — needs krn: StreamValue carrying a SymbolId.
-      // 5 store-elide — needs krn: the set of keys pull nodes read; contract.store=false.
+      {5, "store-elide", "step 3 + storeWriteElision (writes only declared pull reads)",
+       [](util::Config& c) { c.inlineDagDrive = true; c.storeWriteElision = true; },
+       [](Rig& rig, std::span<const Rec> rows, const std::string& ticker, FalsifyState* f) {
+         for (const auto& c : rig.chains) {
+           auto l = std::dynamic_pointer_cast<nodes::Listener>(c.head);
+           if (!l || !l->strand() || !l->strand()->isInline())
+             throw std::runtime_error("step 5: a DAG is not on the inline executor");
+         }
+         if (rig.store.readKeys().empty())
+           throw std::runtime_error("step 5: no pull read declared; elision would have nothing to keep");
+         for (const auto& r : rows) {
+           const Source fields(r);
+           rig.disp.onRecord(r.header.symbolId, fields);
+         }
+         if (!rig.store.readsSealed())
+           throw std::runtime_error("step 5: the read set was never sealed; elision was not in force");
+         // --falsify=readkey: one declared key one ULP off after the run. The
+         // store contract is off for this step, so only the declared-key
+         // comparison can catch it.
+         if (f && f->kind == Falsify::ReadKey) {
+           const auto keys = rig.store.readKeys();
+           const auto v = rig.store.get(keys.front().first, keys.front().second);
+           if (v && std::holds_alternative<double>(*v)) {
+             const double was = std::get<double>(*v);
+             const double now = std::nextafter(was, INFINITY);
+             rig.store.set(keys.front().first, keys.front().second, ArgType{now});
+             if (f->applied++ == 0) f->note = "declared key '" + keys.front().second + "' one ULP up after the run";
+           }
+         }
+         (void)ticker;
+       },
+       {true, false, true, true}},
   };
   return s;
 }
@@ -537,6 +620,14 @@ std::string compare(const RunOutput& ref, const RunOutput& got, const OutputCont
       }
       os << "\n";
     }
+  }
+  if (c.readKeys && (ref.readKeys != got.readKeys || ref.readKeyBytes != got.readKeyBytes)) {
+    os << "declared pull-read keys differ (" << ref.readKeys << " vs " << got.readKeys << " keys, "
+       << ref.readKeysPresent << " vs " << got.readKeysPresent << " present)\n";
+  }
+  if (c.fewerKeys && !(got.storeEntries < ref.storeEntries)) {
+    os << "store-write elision not in force: " << got.storeEntries << " store entries vs "
+       << ref.storeEntries << " in the reference\n";
   }
   if (c.store && ref.storeBytes != got.storeBytes) {
     os << "AtomicStore contents differ (" << ref.storeEntries << " vs " << got.storeEntries
@@ -624,7 +715,7 @@ struct Args {
 int usage() {
   std::cerr <<
       "usage: krn_b2_bench --dbn <trades.dbn|mbo.dbn> [--iterations N] [--warmup W] [--threads T]\n"
-      "                    [--falsify=ulp|drop|swap|store]\n"
+      "                    [--falsify=ulp|drop|swap|store|readkey] [--graph=default|wide]\n"
       "  exit 0: every iteration of every step byte-identical to step 1\n"
       "  exit 1: a mismatch (a finding)\n"
       "  exit 2: could not run\n";
@@ -684,7 +775,8 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
               static_cast<unsigned long long>(sample.bytes), static_cast<unsigned long long>(sample.fnv1a32));
   std::printf("  rows          : %zu %s (ticker %s, from DBN symbology): %zu carry fields, %zu fieldless\n",
               rows.size(), Kind::kName, sample.ticker.c_str(), rows.size() - fieldless, fieldless);
-  std::printf("  graph         : %zu requests, non-windowed (D9):", requests().size());
+  std::printf("  graph         : %s, %zu requests, non-windowed (D9):", gWideGraph ? "wide" : "default",
+              requests().size());
   for (const auto& r : requests()) std::printf(" %s", r.name);
   std::printf("\n");
   cpu_set_t set;
@@ -701,9 +793,10 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
               a.iterations, a.warmup);
   std::printf("  timed region  : first ingress call -> ThreadPool::drain() returns (graph quiesced)\n");
   if (a.falsify != Falsify::None)
-    std::printf("  FALSIFY       : %s (step 2 only)\n",
+    std::printf("  FALSIFY       : %s (%s only)\n",
                 a.falsify == Falsify::Ulp ? "ulp" : a.falsify == Falsify::Drop ? "drop" :
-                a.falsify == Falsify::Swap ? "swap" : "store");
+                a.falsify == Falsify::Swap ? "swap" : a.falsify == Falsify::Store ? "store" : "readkey",
+                a.falsify == Falsify::ReadKey ? "step 5" : "step 2");
 
   const auto& ss = steps<Rec>();
   std::vector<std::vector<double>> seconds(ss.size());
@@ -719,7 +812,8 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
         util::Config cfg;
         step.configure(cfg);
         Rig rig(a.threads, cfg, sample.ticker, symbols);
-        FalsifyState* f = (step.number == 2 && a.falsify != Falsify::None) ? &fstate : nullptr;
+        const int target = a.falsify == Falsify::ReadKey ? 5 : 2;
+        FalsifyState* f = (step.number == target && a.falsify != Falsify::None) ? &fstate : nullptr;
 
         const auto t0 = std::chrono::steady_clock::now();
         step.drive(rig, rows, sample.ticker, f);
@@ -743,6 +837,11 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
                            requests()[q].name);
               return kExitCouldNot;
             }
+          }
+          if (out.readKeys == 0 || out.readKeysPresent != out.readKeys) {
+            std::fprintf(stderr, "krn_b2_bench: %zu declared pull-read keys, %zu holding a value; refused\n",
+                         out.readKeys, out.readKeysPresent);
+            return kExitCouldNot;
           }
           if (out.storeEntries == 0) {
             std::fprintf(stderr, "krn_b2_bench: AtomicStore empty after the run; refused\n");
@@ -773,7 +872,8 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
     std::printf(" %s=%zu", requests()[q].name, reference.perRequest[q].values.size());
     deliveries += reference.perRequest[q].values.size();
   }
-  std::printf(" deliveries (%zu total), %zu store entries\n\n", deliveries, reference.storeEntries);
+  std::printf(" deliveries (%zu total), %zu store entries, %zu of them declared pull reads\n\n",
+              deliveries, reference.storeEntries, reference.readKeys);
 
   std::printf("| step | path | rows/iter | iters | median rows/s | p10 rows/s | p90 rows/s | median us/row | vs step 1 |\n");
   std::printf("|---|---|---:|---:|---:|---:|---:|---:|---:|\n");
@@ -795,13 +895,15 @@ int measure(const Args& a, const Sample& sample, const std::vector<Rec>& all,
     if (fstate.applied == 0) return kExitCouldNot;
   }
 
-  std::printf("\nbit-identical: %zu comparisons against the reference (deliveries + store)\n", comparisons);
+  std::printf("\nbit-identical: %zu comparisons against the reference (deliveries + declared pull-read keys,\n"
+              "               + the whole store for steps 1-3; step 5 must hold strictly fewer store entries)\n",
+              comparisons);
   if (!mismatches.empty()) {
     std::printf("MISMATCH in %zu of %zu comparisons:\n", mismatches.size(), comparisons);
     for (const auto& m : mismatches) if (!m.empty()) std::printf("  %s", m.c_str());
     return kExitMismatch;
   }
-  std::printf("IDENTICAL: every iteration of every step reproduced step 1 byte-for-byte\n");
+  std::printf("IDENTICAL: every iteration of every step reproduced step 1 byte-for-byte under its contract\n");
   return kExitIdentical;
 }
 
@@ -821,12 +923,17 @@ int main(int argc, char** argv) {
     else if (const char* v2 = val("--iterations")) a.iterations = std::atoi(v2);
     else if (const char* v3 = val("--warmup")) a.warmup = std::atoi(v3);
     else if (const char* v4 = val("--threads")) a.threads = static_cast<unsigned>(std::atoi(v4));
-    else if (const char* v5 = val("--falsify")) {
+    else if (const char* g = val("--graph")) {
+      const std::string k = g;
+      if (k == "wide") gWideGraph = true;
+      else if (k != "default") return usage();
+    } else if (const char* v5 = val("--falsify")) {
       const std::string k = v5;
       if (k == "ulp") a.falsify = Falsify::Ulp;
       else if (k == "drop") a.falsify = Falsify::Drop;
       else if (k == "swap") a.falsify = Falsify::Swap;
       else if (k == "store") a.falsify = Falsify::Store;
+      else if (k == "readkey") a.falsify = Falsify::ReadKey;
       else return usage();
     } else return usage();
   }
