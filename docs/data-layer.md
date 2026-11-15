@@ -576,26 +576,75 @@ PARTITION BY toYYYYMMDD(ts_event)
 ORDER BY (symbol, ts_event, provider_seq)
 ```
 
-**Plain `MergeTree`, not `ReplacingMergeTree`.** Re-pulling windows will happen — a gap, a
-correction, a schema change — and the mechanism is `DROP PARTITION` + reload from the
-retained DBN files, with `krn.ingest_windows` as the authority on what is loaded.
+That is the shipped key on `trades`, `book_events` and `book_snapshots`
+(`data/schema/clickhouse.sql`). **Plain `MergeTree`, not `ReplacingMergeTree`.** Re-pulling
+windows will happen — a gap, a correction, a schema change — and the mechanism is
+`DROP PARTITION` + reload from the retained DBN files, with `krn.ingest_windows` as the
+authority on what is loaded.
 
 Why this and not dedup:
 
 - **It dissolves C12.** No dedup means nothing can silently collapse two distinct MBO
-  records, so the sort key need not be unique.
+  records, so the sort key need not be unique. On the real sample it is not: 1000
+  `book_events` rows carry only 676 distinct `(symbol, ts_event, provider_seq)` keys
+  (measured by ENC-1483's ingest and reported as ENC-1484's number).
 - **No merge amplification.** `ReplacingMergeTree` on an MBO-sized table rewrites enormous
   parts for a property we get more cheaply.
 - Cost: partitions are day-granular, so re-pulling one symbol-day reloads that whole day.
   At one symbol that is identical. If per-symbol re-pulls become common, a lightweight
-  `DELETE WHERE symbol = … AND ts_event IN range` then insert is the finer-grained form.
+  `DELETE WHERE symbol = … AND ts_event IN range` then insert is the finer-grained form. It
+  is not built.
 
 **Pick one or the other, never both:** a `ReplacingMergeTree` with a non-unique key
 collapses rows no matter how you re-ingest.
 
-Insert **symbol-sorted batches per day partition** — the key leads with symbol, so raw DBN
-file order (time-ordered) forces a per-part re-sort. The ingest job owns this; a background
-merge cannot fix it after the fact.
+**A day partition holds every symbol, and completeness is recorded per symbol.** So
+`DROP PARTITION` for one symbol-day also deletes every other symbol's rows for that day,
+while their `krn.ingest_windows` rows still read `state = 1`. `isComplete` then answers
+complete over an empty partition. Nothing in ClickHouse enforces the repair: there is no
+foreign key and no trigger. **The ingest job owns it** (`ingest::run`,
+`data/src/IngestJob.cpp`). The DDL states the invariant beside `CREATE TABLE
+krn.ingest_windows`.
+
+What the job does, in order (`data/src/IngestJob.cpp`, pass 2):
+
+1. **Nothing is dropped until both kinds have decoded.** Pass 1 decodes and round-trips
+   every kind first (on `ingest` it transcodes and retains the DBN before that), and every
+   refusal it raises fires before pass 2 starts.
+2. It collects the days to drop: the days the recorded window spans plus the day of every
+   decoded row.
+3. **For every other symbol** with a recorded window of the same kind that intersects one of
+   those days, it writes a `state = 3` (invalidated) row with `source_ref` "invalidated by
+   DROP PARTITION <day> for <symbol>". A malformed row in that lookup is a refusal, never a
+   skip. At that point nothing has been dropped for the current kind, but kinds run in order
+   (`trades` first), so a refusal during `book_events` comes after `trades` has already been
+   dropped and reloaded.
+4. It writes `state = 0` (in flight) for its own recorded window.
+5. `ALTER TABLE … DROP PARTITION <day>` for each day, on that kind's table only.
+6. It inserts the rows. On an insert error it writes `state = 2` (failed) and returns. Then
+   it writes `krn.symbology` (§8.9), then `state = 1` with `rows_inserted` set to the rows it
+   sent. A failed symbology insert returns with the window still at `state = 0`, which reads
+   as not ingested.
+
+**What that order does not cover, stated plainly:**
+
+- **The symbol's own other windows.** Step 3 selects `symbol != <this symbol>`, and step 4
+  covers only the window being written. A recorded window of the *same* symbol and kind with
+  a different `(from_ts, to_ts)` on a dropped day gets no new row, so its newest row can stay
+  `state = 1` over rows step 5 deleted. Only the rows this pull reloads come back.
+- **A `DROP PARTITION` typed at the server** bypasses all of it. ENC-1483 measured that
+  `isComplete` then returns complete over an empty table.
+
+In both cases `krn_ingest verify`'s refutation check (§8.8) reports it when the window is
+left with zero rows, and only for the `--symbol` it is run for. It cannot see a window that
+is only partly emptied.
+
+**Sort order on insert.** The key leads with symbol, so a batch should arrive sorted by it;
+a background merge cannot fix the order after the fact. A pull is one symbol (the decode
+refuses a file with more than one symbol or `instrument_id`, `data/src/IngestJob.cpp`), so
+the job `stable_sort`s on `(ts_event, provider_seq)` and leaves ties in arrival order,
+because the key is not unique. It sends one `INSERT … FORMAT TabSeparated` per kind, and
+ClickHouse splits a multi-day insert by partition.
 
 ### 8.7 The retained DBN files are load-bearing
 
@@ -625,43 +674,172 @@ returns a flat market:
 | **we have not ingested it yet** | not in `ingest_windows` — **not a gap** |
 
 So completeness is **recorded by the ingest job, never inferred from row counts** (a quiet
-window and a missing window have the same count, which is the whole problem), and
-`IL1Store::isComplete` makes a query over an incomplete window **fail** rather than answer
-short. It also makes bulk ingest restartable: a ClickHouse insert is atomic per block, not
-per batch, so an interrupted batch leaves some blocks committed and recovery is re-running
-the window — which §8.6 makes exact.
+window and a missing window have the same count, which is the whole problem), and a query
+over an incomplete window must **fail** rather than answer short. It also makes bulk ingest
+restartable: a ClickHouse insert is atomic per block, not per batch, so an interrupted batch
+leaves some blocks committed and recovery is re-running the window — which §8.6 makes exact.
+
+**Where the rule lives today.** It is implemented once, as `krn::data::isComplete`
+(`data/include/krn/data/IngestWindows.hpp`, `data/src/IngestWindows.cpp`), and fed by
+`ingest::queryCompleteness` (`data/src/IngestJob.cpp`). Its only caller is
+`krn_ingest verify`. `IL1Store::isComplete` in `IHistoryBackend.hpp` is a pure virtual whose
+`ClickHouseL1Store` and `FixtureL1Store` overrides are declared and not defined, because the
+planner that would call them is not built.
+
+#### The engine, and the mechanism it replaced
+
+Revision 2 made this table `ReplacingMergeTree(completed_at)`. **ENC-1480 measured that
+on ClickHouse 25.3.14.14 and reversed it.** `completed_at` is a *completion* clock, so a row
+written while a window is in flight carries `0`. A re-ingest therefore writes:
+
+```
+write 1  (state=1, completed_at=T)   -- ingest succeeded
+write 2  (state=0, completed_at=0)   -- re-ingest in flight; DROP PARTITION has run
+
+SELECT state … FINAL                                  -> 1   (stale)
+max-by-completed_at aggregate over the window         -> 1   (stale)
+OPTIMIZE TABLE … FINAL                                -> only (1, T) survives
+```
+
+`0 < T`, so the stale success row wins every resolution, and a background merge then deletes
+the row that says "not loaded". The window reads complete **permanently and silently**, the
+flat-market failure this table exists to prevent. Reading with `FINAL` does not mitigate it.
+
+**What shipped instead** (`CREATE TABLE krn.ingest_windows`, `data/schema/clickhouse.sql`):
+plain `MergeTree`, unpartitioned, used as an **append-only transition log** — one row per
+state change of one window, never an update in place.
+
+| column | what the job writes (`writeWindowRow`, `data/src/IngestJob.cpp`) |
+|---|---|
+| `symbol`, `kind`, `from_ts`, `to_ts` | the recorded window, half-open `[from_ts, to_ts)`. The job writes `kind` as `trades` or `book_events` |
+| `state` | `0` in flight, `1` complete, `2` failed, `3` invalidated by another symbol's `DROP PARTITION` (§8.6) |
+| `updated_at` | a **write** clock: `now64(3)` on **every** row, `state = 0` included. The DDL adds `DEFAULT now64(3)` as a backstop, because a column with no default stores epoch 0 when an insert omits it |
+| `completed_at` | `now64(3)` on the `state = 1` row, epoch 0 on every other row. **Never used to order rows** |
+| `rows_inserted` | rows sent, on the `state = 1` row. Diagnostics only |
+| `session_id`, `source`, `source_ref` | provenance. `source` is `'databento'`. `source_ref` is the vendor job id on `ingest`, empty on `reload` (the job id is not in DBN), and names the drop on a `state = 3` row |
+
+**Sort key: `(symbol, kind, from_ts, to_ts, updated_at)`, with `session_id` deliberately out
+of it.** `to_ts` is in it because the rule resolves per recorded window, below. `session_id`
+is out because nothing makes it time-monotonic: placed between the window and the clock, the
+tail of a key range would be the newest row of the *highest* `session_id` rather than the
+newest row. The key is not unique and does not need to be, because nothing dedups here. This
+is the DDL's decision, restated here rather than cited from an earlier revision of this
+section, which specified no key.
 
 **⚠ `(symbol, kind, from_ts, session_id)` IS NOT "UNIQUE BY CONSTRUCTION" — THAT CLAIM IS
 WITHDRAWN (ENC-1483).** It was true of revision 2's one-row-per-window
-`ReplacingMergeTree`, and ENC-1480 replaced that with an **append-only transition log**: one
-window and one session write at least two rows (`state=0` then `state=1`), and a failed run
-writes three. ENC-1483's first ingest of two windows produced exactly **four** rows.
-Uniqueness is not what makes the table readable and never was — **the read rule is**, written
-out in full beside `CREATE TABLE krn.ingest_windows` in `data/schema/clickhouse.sql`:
-*newest row by `updated_at` per recorded `(symbol, kind, from_ts, to_ts)`, require
-`state = 1`, then test **coverage** of the request.* It is implemented once, in
-`data/include/krn/data/IngestWindows.hpp`, and it is correct whether or not a re-ingest reuses
-its session.
+`ReplacingMergeTree`. In an append-only transition log, one window and one session write at
+least two rows (`state = 0` then `state = 1`), and a failed run writes three. ENC-1483's
+first ingest of two windows produced exactly **four** rows. The table is readable because of
+the read rule, not because of uniqueness.
 
-**It does, and `session_id` is the retained DBN file's own identity** —
-`FNV-1a-32` over the `.dbn`, so a reload of unchanged bytes reproduces bit-identical rows
-(SPEC §5 under T5 carries the reasoning and what the first, wrong answer cost).
+#### The read rule
 
-**And the window a job records is the window it was DELIVERED, not the window it requested.**
+```
+isComplete(symbol, kind, [req_from, req_to)) :=
+    W := { [from_ts, to_ts) recorded for (symbol, kind)
+           whose NEWEST row by updated_at has state = 1 }
+    require  [req_from, req_to)  is covered by  union(W).
+    Any part of the request not covered -> NOT INGESTED -> FAIL (D11).
+```
+
+As the code runs it:
+
+1. **Select, do not compute.** `queryCompleteness` selects `from_ts, to_ts, state,
+   updated_at` with `WHERE symbol = … AND kind = …`. It uses no aggregate, no `FINAL`, no
+   `LIMIT` and no `ORDER BY`. Resolution and coverage both happen in C++.
+2. **Resolve per recorded window, newest `updated_at` wins.** The grouping key is
+   `(from_ts, to_ts)`, not `from_ts` alone (`ResolvingPerFromTsAloneAnswersHalfADayAsWhole`).
+   A re-ingest in flight drops the window out of `W` even though an older `state = 1` row
+   exists (`TheNewestRowWinsPerRecordedWindow`). So does an invalidation
+   (`AStateThreeInvalidationVoidsAnEarlierSuccess`).
+3. **A tie in `updated_at` resolves to the lowest state.** `updated_at` has millisecond
+   precision, so two writes can tie, and a tie between `1` and `0` reads as in flight
+   (`TieResolvesToTheLowestState`). This is a choice made in `IngestWindows.hpp`; the DDL
+   says only that a tie makes "the newest row" arbitrary.
+4. **Only then does `state = 1` select.** Rows in states `0`, `2` and `3` contribute nothing
+   (`StateTwoAndThreeContributeNothing`), and `rows_inserted` is never read.
+5. **Coverage of the request.** The surviving windows are merged, with adjacent half-open
+   intervals joined, and the request must be covered with no hole
+   (`SevenAdjacentDailyWindowsCoverASevenDayRequest`, `AHoleInTheMiddleFailsAndNamesIt`). A
+   refusal returns the first uncovered interval. No rows at all is refused with
+   `resolved == 0`, meaning never ingested. Rows with no survivor is refused with
+   `resolved > 0, survived == 0`, meaning in flight or invalidated
+   (`NoRowsIsRefusedAndSaysSoDistinctly`). An empty or inverted request is refused, not
+   treated as trivially complete (`AnInvertedOrEmptyRequestIsNotTriviallyComplete`).
+
+All of these tests are in `data/tests/IngestWindowsTest.cpp`.
+
+**The rule is correct whether or not a re-ingest reuses its session, and it does reuse it.**
+By default `session_id` is the retained DBN file's own identity: `FNV-1a-32` over the whole
+`.dbn`, forced non-zero (`deriveSessionId`, `data/src/IngestJob.cpp`). An explicit
+`--session-id` overrides it. Under the default, so a reload of unchanged bytes
+reproduces bit-identical rows. SPEC §5 under T5 carries the reasoning, and records what the
+first, wrong answer cost.
+
+#### The recorded window is the window DELIVERED, not the window requested
+
 A Databento pull carrying a `limit` stops at that many records in time order, so a pull that
-returns exactly its limit is a **prefix** of the requested range — measured: ENC-1483's
-`mbo` job requested 90 minutes and delivered **68 seconds**. Recording the request would be
-this section's failure in the one table written to prevent it. The job records
-`[requested_start, last_ts_event)` when `records == limit`, dropping the possibly-partial
-final instant from the claim while still inserting its rows, and `[requested_start,
-requested_end)` otherwise.
+returns exactly its limit is a **prefix** of the requested range. Measured: ENC-1483's `mbo`
+job requested `[12:30, 14:00)` UTC and delivered **68.3 seconds**, and its `trades` job
+delivered **22.3 minutes**, all of it pre-market. Recording the request would be this
+section's failure in the one table written to prevent it. The job records:
 
-**A hazard the schema cannot close.** Maintaining this table across a `DROP PARTITION` is a
-code obligation of the ingest job, so a `DROP PARTITION` issued *outside* the job leaves the
-table asserting a window whose data is gone — measured, and `isComplete` duly returned
-complete over an empty table with the rule behaving perfectly. A row count cannot *establish*
-completeness, but it can *refute* a claim: a `state=1` window claiming `rows_inserted > 0`
-whose range holds zero rows is a lie, and `krn_ingest verify` checks exactly that.
+```
+truncated := limit != 0  AND  records == limit
+
+[from_ts, to_ts) := [requested_start, last_ts_event)   if truncated
+                    [requested_start, requested_end)   otherwise
+```
+
+Two clauses are deliberate:
+
+- **`from_ts` is the requested start, not the first record's `ts_event`.** The vendor
+  delivers everything from `start`, so a quiet opening second is data.
+- **`to_ts` is the last `ts_event`, exclusive, not `+1 ns`.** The cut may have fallen inside
+  a group of records sharing one instant (ten of the sample's `mbo` records carry its last
+  `ts_event`), and the file cannot say whether it did. So the possibly-partial final instant
+  is left out of the *claim* while its rows are still inserted.
+
+Where each input comes from:
+
+- **`ingest` (from CSV).** `limit`, `start` and `end` come from the job's `metadata.json`,
+  which is refused if its `query.schema` is not the CSV's. `truncatedByLimit` and
+  `deliveredEnd()` are in `data/include/krn/data/DatabentoCsv.hpp`. `ts_event` must be
+  non-decreasing: a descent is refused, never published as a smaller end
+  (`OutOfOrderTsEventIsRefusedRatherThanPublished`), and equal timestamps are not a descent
+  (`RepeatedTimestampsAreNotADescent`).
+- **`reload` (from DBN only).** The same three fields come from the retained DBN's metadata
+  block. Truncation is detectable on a reload only because the encoder writes `limit` into
+  that block. `records` is the count of DBN records decoded, and `last_ts_event` is the
+  largest `ts_event` over the decoded canonical rows (`data/src/IngestJob.cpp`). **This
+  differs from `ingest`**, which takes the last CSV record's `ts_event`. An `mbo` record with
+  action `N` yields no canonical row, so on a truncated `mbo` pull ending in such records a
+  reload records a smaller `to_ts` than the ingest did. That is a different recorded window,
+  and the original one gets no new row (§8.6). No test drives the reload path.
+
+The truncation tests, all on the CSV path, are `RecordsEqualToTheLimitMeansThePullWasCut`,
+`FewerRecordsThanTheLimitClaimsTheWholeRequest`, `NoLimitIsNeverTruncated` and
+`RecordsSharingTheLastInstantAreCounted`. Through the job, the test is
+`TheRecordedWindowIsTheDeliveredOneNotTheRequestedOne`, and all of them are in
+`data/tests/DatabentoCsvTest.cpp`. An empty CSV is refused by the transcoder
+(`AnEmptyPullIsRefusedRatherThanRecordedAsAWindow`). Separately, the job refuses to write any
+recorded window that comes out empty (`to_ts <= from_ts`), a check that no test reaches.
+
+#### A hazard the schema cannot close, and the one count that is admissible
+
+Maintaining this table across a `DROP PARTITION` is a code obligation of the ingest job
+(§8.6). A `DROP PARTITION` issued *outside* the job leaves the table asserting a window whose
+data is gone. ENC-1483 measured that, and `isComplete` duly returned complete over an empty
+table while the rule behaved exactly as written.
+
+**A row count cannot *establish* completeness, but it can *refute* a claim.** A `state = 1`
+window claiming `rows_inserted > 0` whose range holds zero rows is a lie, not a quiet market.
+`krn_ingest verify` checks exactly that, one surviving window at a time
+(`data/tools/krn_ingest_main.cpp`). For each `(from_ts, to_ts)` the read rule kept, it takes
+`rows_inserted` from that window's newest `state = 1` row and counts the table's rows in
+`[from_ts, to_ts)`. It reports a finding when the claim is above zero and the count is zero.
+That is the whole check. A partly emptied window, or a claim of zero, is not refuted.
 
 ### 8.9 Symbol identity — ticker as the key, `instrument_id` for provenance
 
@@ -682,17 +860,45 @@ mapping.**
   bare ticker with no provenance, reconstructing what a ticker meant on a given day is
   archaeology.
 
+As shipped (`data/schema/clickhouse.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS krn.symbology
 ( dataset LowCardinality(String), instrument_id UInt32,
   raw_symbol LowCardinality(String),
   valid_from DateTime64(9,'UTC'), valid_to DateTime64(9,'UTC'),  -- half-open
-  source_ref String )
-ENGINE = ReplacingMergeTree ORDER BY (dataset, instrument_id, valid_from);
+  source_ref String,
+  ingested_at DateTime64(3,'UTC') )                               -- version: a write clock
+ENGINE = ReplacingMergeTree(ingested_at) ORDER BY (dataset, instrument_id, valid_from);
 ```
 
-(`ReplacingMergeTree` is safe *here*: the key is unique by construction and the table is
-tiny.)
+`ReplacingMergeTree` is safe *here*, and this is the only table that uses it. The key is
+unique by construction: one instrument cannot carry two symbols from the same instant, and no
+source record yields two rows sharing a key, as `book_events` records do. The table is also
+tiny.
+
+**`ingested_at` is a deviation from this section's earlier sketch, which had no version
+column, and the sketch was wrong.** A mapping is discovered *open* and *closed* later, when
+the instrument is reassigned. Closing it rewrites `valid_to` on an unchanged key, and a
+version-less `ReplacingMergeTree` keeps an arbitrary one of the two rows, so "the interval
+was closed" and "the interval is still open" could both survive. With `ingested_at` the later
+write wins. It is a **write** clock, not a semantic one, for the reason
+`ingest_windows.completed_at` failed (§8.8): a version column that is zero or early on the
+newer row makes the stale row win. ENC-1480 verified on the same server that this table
+resolves an open interval's later closure correctly.
+
+**What the job writes** (`data/src/IngestJob.cpp`, after the event insert succeeds and before
+the `state = 1` row): one row per mapping the pull carries.
+`valid_from` is midnight UTC of the first day observed, and `valid_to` is midnight of the day
+*after* the last, so the interval is half-open and **day-granular**, because DBN's mapping
+intervals are. `ingested_at` is `now64(3)`. `source_ref` is the vendor job id, or the DBN
+path on `reload`. Every re-run writes a fresh row with the same key, and the engine keeps the
+newest.
+
+**Read with version resolution.** A plain `SELECT` can return a stale row from before the
+merge, so an open-ended `valid_to` can outlive its closure. `krn_ingest verify` reads
+`krn.symbology FINAL` (`data/tools/krn_ingest_main.cpp`). That is control-plane metadata, not
+a value an operator consumes, so it does not cross D2.
 
 **Not solved, and named rather than hidden:** a ticker delisted and later reassigned to a
 different company. `valid_from`/`valid_to` lets you **detect** it; what a continuous series
@@ -711,8 +917,7 @@ question still needs a full day. What T5 *did* settle here is that the mapping a
 correctly: the vendor's `symbol` column (with `map_symbols: true`) is the symbology carrier,
 it reaches the adapter through the DBN metadata's mappings section, and
 `krn.symbology` holds `XNAS.ITCH / 7370 / MSFT / [2022-06-10, 2022-06-11)` with the batch id
-as `source_ref`. Note the half-open interval is **day-granular** because DBN's mapping
-intervals are.
+as `source_ref`.
 
 ### 8.10 Codecs
 
