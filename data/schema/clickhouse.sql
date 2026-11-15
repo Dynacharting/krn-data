@@ -272,6 +272,15 @@ SETTINGS index_granularity = 8192;
 -- implied because OrderKey already carries it, which is what stops a pre-reset
 -- order being matched by a post-reset message.
 --
+-- `side` and `aggressor` HAVE ONE MEANING EACH (ENC-1494). `side` is the
+-- RESTING side on every row, the passive side on a print included, and 2
+-- (None) when the venue gave none: 65 of the real sample's 1000 mbo rows, all
+-- prints. `aggressor` is the taker and is non-zero on action 3 (trade) rows
+-- only. Before ENC-1494 `side` held the aggressor on a print, "no side" was
+-- spelled 0 (Bid) plus bit 0x0100 of `flags`, and this column did not exist;
+-- an L1 loaded under that shape is reloaded from the retained DBN (D6), not
+-- migrated in place (docs/data-layer.md §8.4).
+--
 -- SORT KEY: THE PLAIN TRIPLE, AND THAT IS A DECISION (SPEC D5, docs §8.6).
 -- Revision 2 ordered by (symbol, ts_event, provider_seq, action, order_id) to
 -- make the key unique, because ReplacingMergeTree's correctness depended on
@@ -297,8 +306,11 @@ CREATE TABLE IF NOT EXISTS krn.book_events
     venue         LowCardinality(String),
 
     action        UInt8                 CODEC(ZSTD(1)),
-    -- krn::data::Side: 0 Bid, 1 Ask
+    -- krn::data::Side, the resting side: 0 Bid, 1 Ask, 2 None
     side          UInt8                 CODEC(ZSTD(1)),
+    -- krn::data::Aggressor, the taker: 0 Unknown, 1 Buy, 2 Sell. 0 on every
+    -- action other than 3 (trade).
+    aggressor     UInt8                 CODEC(ZSTD(1)),
     price         Int64                 CODEC(Delta(8), ZSTD(3)),
     size          UInt64                CODEC(T64, ZSTD(1)),
     -- 0 == the venue supplied no order id (OrderKey idMissing / the

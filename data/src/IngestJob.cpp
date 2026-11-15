@@ -231,7 +231,7 @@ constexpr const char* kTradesColumns =
 
 constexpr const char* kBookEventsColumns =
     "ts_event, ts_recv, provider_seq, session_id, symbol, instrument_id, venue, "
-    "action, side, price, size, order_id, priority, depth, epoch, flags";
+    "action, side, aggressor, price, size, order_id, priority, depth, epoch, flags";
 
 // A field this renderer omits is a field no round-trip assertion covers and no
 // L1 column holds, so the two facts stay tied together. TickRecord's quote half
@@ -256,7 +256,8 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
      << b.header.providerSeq << '\t' << b.header.sessionId << '\t'
      << ch::tsvEscape(symbol) << '\t' << b.header.instrumentId << '\t'
      << ch::tsvEscape(venue) << '\t' << static_cast<unsigned>(b.action) << '\t'
-     << static_cast<unsigned>(b.side) << '\t' << b.price << '\t' << b.size << '\t'
+     << static_cast<unsigned>(b.side) << '\t'
+     << static_cast<unsigned>(b.aggressor) << '\t' << b.price << '\t' << b.size << '\t'
      << b.orderId << '\t' << b.priority << '\t' << b.depth << '\t' << b.epoch
      << '\t' << b.flags << '\n';
   return os.str();
