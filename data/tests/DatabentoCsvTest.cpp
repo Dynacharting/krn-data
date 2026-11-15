@@ -1118,6 +1118,41 @@ TEST(DatabentoCsvJob, AReloadReadsItsWindowFromTheRetainedDbnAlone) {
   }
 }
 
+TEST(DatabentoCsvJob, AReloadRefusesARetainedDbnWhoseTsEventDescends) {
+  const TempDir d;
+  // The CSV path refuses a descent in the transcoder; a retained DBN is
+  // constrained by nothing, so swap its two 48-byte trade records on disk and
+  // the reload must refuse rather than publish the last record as the end.
+  writeFakeRoot(
+      d,
+      "1654864201000000013,1654864201000000000,0,2,4242,T,A,0,100,10,0,13,5,ZZZZ\n"
+      "1654864201000000024,1654864201000000011,0,2,4242,T,A,0,101,11,0,13,6,ZZZZ\n",
+      mboRow(kT0, 'A', 'B', 100, 10, 9, 5), /*limit=*/2);
+  ASSERT_TRUE(ingest::run(fakeOptions(d)).ok());
+  const std::string dbn = d.at("xnas-itch-20220610.trades.dbn");
+  std::string bytes;
+  {
+    std::ifstream in(dbn, std::ios::binary);
+    bytes.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+  ASSERT_GT(bytes.size(), 96u);
+  const std::size_t r1 = bytes.size() - 96, r2 = bytes.size() - 48;
+  ASSERT_EQ(static_cast<unsigned char>(bytes[r1]), 12u) << "48-byte record, length/4";
+  ASSERT_EQ(static_cast<unsigned char>(bytes[r2]), 12u);
+  const std::string swapped = bytes.substr(0, r1) + bytes.substr(r2, 48) + bytes.substr(r1, 48);
+  ASSERT_NE(swapped, bytes) << "the mutation must apply";
+  {
+    std::ofstream out(dbn, std::ios::binary | std::ios::trunc);
+    out << swapped;
+  }
+  const auto rel = ingest::run(reloadOptions(d));
+  ASSERT_FALSE(rel.ok());
+  EXPECT_NE(rel.status().message().find("whose ts_event is below the previous"),
+            std::string::npos)
+      << rel.status().message();
+  EXPECT_TRUE(isFinding(rel.status()));
+}
+
 TEST(DatabentoCsvJob, AnEmptyRecordedWindowIsRefusedOnIngestAndOnReload) {
   const TempDir d;
   // `limit: 1` and the one record sits exactly at the requested start, so the
@@ -1220,7 +1255,7 @@ TEST(DatabentoCsvAntiVacuity, EveryCaseInThisFileIsRegistered) {
       found += suite->total_test_count();
     }
   }
-  EXPECT_EQ(found, 47) << "the DatabentoCsv* suites in this file lost or gained a "
+  EXPECT_EQ(found, 48) << "the DatabentoCsv* suites in this file lost or gained a "
                           "case; update the number deliberately rather than "
                           "letting the count drift";
 }
