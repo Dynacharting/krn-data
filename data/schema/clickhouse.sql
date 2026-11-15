@@ -629,7 +629,8 @@ CREATE TABLE IF NOT EXISTS krn.ingest_windows
     from_ts       DateTime64(9, 'UTC'),
     to_ts         DateTime64(9, 'UTC'),     -- half-open [from_ts, to_ts)
     -- 0 in-flight, 1 complete, 2 failed, 3 invalidated (the data was removed by
-    -- a partition reload for another symbol — see the invariant above). ONLY 3
+    -- a partition reload for another window, of any symbol including this one
+    -- — see the invariant above). ONLY 3
     -- is new relative to revision 2, and it exists because "collaterally wiped"
     -- is neither in-flight nor failed, and writing it as either would be a lie
     -- in the one table whose job is to not lie. A window is readable only when

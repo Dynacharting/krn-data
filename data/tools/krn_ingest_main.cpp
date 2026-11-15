@@ -329,7 +329,7 @@ int cmdIngest(const Args& a, bool fromDbnOnly) {
   for (const auto& p : rep.partitionsDropped) std::cout << ' ' << p;
   std::cout << "\n";
   std::cout << "invalidation rows      : " << rep.invalidationRows.size()
-            << " (other symbols whose completeness the DROP PARTITION voided)\n";
+            << " (other recorded windows, any symbol, whose completeness the DROP PARTITION voided)\n";
   for (const auto& r : rep.invalidationRows) std::cout << "    " << r << "\n";
 
   std::cout << "\n=== session_id reuse — THE RULING (assigned here from ENC-1480) ===\n"
