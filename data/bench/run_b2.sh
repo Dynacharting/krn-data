@@ -14,6 +14,15 @@
 #   KRN_B2_MBO_DBN     the retained mbo DBN of the same pull (ENC-1628)
 #   KRN_B2_ITERATIONS  measured iterations per step (default 200)
 #   KRN_B2_WARMUP      discarded warm-up iterations per step (default 5)
+#   KRN_B2_SCHEMAS     which data points to run, in order (default "trades mbo").
+#                      ENC-1641: e.g. KRN_B2_SCHEMAS=trades to run one schema of
+#                      a vendor day on its own. The falsification count follows
+#                      (5 per schema per graph, 20 for the default pair). Vendor
+#                      mbo days decode since ENC-1640's symbology fix (32a08f5).
+#   KRN_B2_FALSIFY_ITERATIONS  measured iterations per falsification run
+#                      (default 3). Any value >= 1 is a real comparison: the
+#                      reference is step 1's first iteration and the mutated
+#                      step is compared against it in the same iteration.
 #
 # Exit: 0 every step byte-identical to step 1 AND every falsification turned
 # the verdict red; 1 a mismatch, or a falsification that stayed green; 2 could
@@ -27,12 +36,19 @@ trades="${KRN_B2_TRADES_DBN:-$sample_dir/xnas-itch-20220610.trades.dbn}"
 mbo="${KRN_B2_MBO_DBN:-$sample_dir/xnas-itch-20220610.mbo.dbn}"
 iters="${KRN_B2_ITERATIONS:-200}"
 warm="${KRN_B2_WARMUP:-5}"
+read -r -a schemas <<<"${KRN_B2_SCHEMAS:-trades mbo}"
+fiters="${KRN_B2_FALSIFY_ITERATIONS:-3}"
+for s in "${schemas[@]}"; do
+  [[ $s == trades || $s == mbo ]] || { echo "run_b2.sh: KRN_B2_SCHEMAS: unknown schema '$s'" >&2; exit 2; }
+done
+[[ ${#schemas[@]} -gt 0 ]] || { echo "run_b2.sh: KRN_B2_SCHEMAS is empty" >&2; exit 2; }
 
 if [[ ! -x "$bin" ]]; then
   echo "run_b2.sh: $bin not built; configure with -DKRN_DATA_BUILD_BENCHMARKS=ON" >&2
   exit 2
 fi
-for f in "$trades" "$mbo"; do
+for s in "${schemas[@]}"; do
+  f=$trades; [[ $s == mbo ]] && f=$mbo
   if [[ ! -r "$f" ]]; then
     echo "run_b2.sh: sample not readable: $f (set KRN_B2_TRADES_DBN / KRN_B2_MBO_DBN)" >&2
     exit 2
@@ -50,7 +66,7 @@ trap 'rm -rf "$tmp"' EXIT
 # ENC-1627: each data point on both graphs. `wide` adds seven pushed builtins
 # whose store keys nothing reads, which is what step 5 elides.
 for graph in default wide; do
-for schema in trades mbo; do
+for schema in "${schemas[@]}"; do
   dbn=$trades; [[ $schema == mbo ]] && dbn=$mbo
   for threads in hw 1; do
     echo "## B2 steps 1-3 and 5, $schema, $graph graph — pool threads = $([[ $threads == hw ]] && echo "hardware_concurrency (Host's default)" || echo 1)"
@@ -59,6 +75,8 @@ for schema in trades mbo; do
     "$bin" --dbn "$dbn" --iterations "$iters" --warmup "$warm" --graph="$graph" "${targs[@]}"
     rc=$?
     [[ $rc -eq 0 ]] || { echo "run_b2.sh: $schema $graph measurement exited $rc" >&2; exit "$rc"; }
+    echo
+    echo "  loadavg after : $(cat /proc/loadavg)"
     echo
   done
 done
@@ -71,11 +89,11 @@ echo "|---|---|---|---|---:|---|"
 bad=0
 n=0
 for graph in default wide; do
-for schema in trades mbo; do
+for schema in "${schemas[@]}"; do
   dbn=$trades; [[ $schema == mbo ]] && dbn=$mbo
   for kind in ulp drop swap store readkey; do
     out="$tmp/falsify-$graph-$schema-$kind.txt"
-    "$bin" --dbn "$dbn" --iterations 3 --warmup 0 --graph="$graph" --falsify="$kind" >"$out" 2>&1
+    "$bin" --dbn "$dbn" --iterations "$fiters" --warmup 0 --graph="$graph" --falsify="$kind" >"$out" 2>&1
     frc=$?
     applied=$(sed -n 's/^falsify: applied — //p' "$out")
     if [[ $frc -eq 1 && -n "$applied" ]] && grep -q '^MISMATCH' "$out"; then
@@ -90,4 +108,5 @@ done
 done
 [[ $bad -eq 0 ]] || { echo "run_b2.sh: a falsification did not turn the verdict red" >&2; exit 1; }
 echo
-echo "run_b2.sh: steps 1-3 and 5 byte-identical under their contracts on trades and mbo, both graphs; $n of 20 falsifications red"
+total=$((5 * 2 * ${#schemas[@]}))
+echo "run_b2.sh: steps 1-3 and 5 byte-identical under their contracts on ${schemas[*]}, both graphs; $n of $total falsifications red"
