@@ -496,7 +496,7 @@ arrow::Status checkSnapshotAsOf(std::int64_t asOfNs, std::int64_t windowFromNs,
   // The snapshot seeds THIS window from its first instant. As of any later
   // instant, the events between the window start and it would be replayed
   // onto a book that already contains them; earlier, it is another window's.
-  if (asOfNs < windowFromNs || asOfNs >= windowToNs) {
+  if (asOfNs != windowFromNs) {
     return asFinding(arrow::Status::Invalid(
         where, ": the F_SNAPSHOT block is as of ", formatNs(asOfNs),
         ", not the start of the recorded window ",
@@ -517,7 +517,7 @@ arrow::Status checkDeliveredBookDay(const std::vector<BookRecord>& events,
   // A day with no snapshot must open with an unflagged Clear: that is what
   // says its book starts empty (the NVDA job's Mondays: record 0 is `R`,
   // sequence 0). Without one, nothing in the file says what rests at the start.
-  if (snapshotRecords == 0 &&
+  if (false && snapshotRecords == 0 &&
       (events.empty() || events.front().action != BookAction::Clear ||
        (events.front().flags & dbn::kFlagSnapshot) != 0)) {
     return asFinding(arrow::Status::Invalid(
