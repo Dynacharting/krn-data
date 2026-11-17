@@ -1156,7 +1156,8 @@ scroll-back (§10). Parquet and DuckDB **entirely** (C10, §15).
 ## 14. Measurement first
 
 **Nothing in §6 or §5.2 is chosen without these.** B1's apparatus exists and has been run on
-the T5 sample (§14.3); B2's is ENC-1487's `krn_b2_bench`. Neither settles anything yet.
+the T5 sample (§14.3) and on the NVDA month (§14.4, which settles §5.2 as native); B2's is
+ENC-1487's `krn_b2_bench`.
 
 | id | measures | notes |
 |---|---|---|
@@ -1256,6 +1257,23 @@ What this sample shows, and only for it:
   per-query fixed cost × 1000, not a streaming rate and not a ceiling for a long scan.
 
 A transport choice, and any `B2 ≥ B1` comparison, waits for a sample spanning many granules.
+
+### 14.4 B1 on the NVDA month — ENC-1662, 2026-11-17
+
+**Settles §5.2: native.** The data is the delivered NVDA `XNAS.ITCH` jobs: 9.92 M trades and
+304.0 M book events, 2026-10-16 to 2026-11-16. Over day, week and month ranges, native beats
+HTTP `ArrowStream` by 1.8–2.5× rows/s in all 100 cells, and the p10–p90 bands are disjoint in
+every one.
+
+- The cost is ClickHouse's own Arrow serialisation. In `system.query_log` the server-side
+  duration and the user CPU track the client wall time.
+- Block size stops helping at `index_granularity` = 8192.
+- Compact parts (< 10 MB) deliver one granule per block whatever `max_block_size` says. That is
+  why §14.3's sweep collapsed.
+
+The B1 ceiling, native and warm, is 13–19 M rows/s for trades and about 12.8 M rows/s for
+mbo, which means 2.35 s for the heaviest day (30.2 M rows). That is the B1 half of `B2 ≥ B1`.
+Tables, exact commands and load: `data/bench/b1_nvda_results.md`.
 
 ---
 
