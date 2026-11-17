@@ -273,10 +273,16 @@ void printKind(const ingest::KindReport& k) {
               << " row(s) inserted into krn.book_snapshots, as of "
               << ingest::formatNs(k.snapshotAsOfNs) << "\n";
   }
-  if (k.kind == "book_events") {
+  if (k.kind == "book_events" && !k.condition.empty()) {
+    // A delivered DBN day: this count is gated (kSnapshotRuling).
     std::cout << "  unknown orders : " << k.unknownOrders
               << " Cancel/Modify record(s) naming an order the snapshot and "
-                 "the day's Adds did not introduce\n";
+                 "the day's Adds did not introduce (must be 0)\n";
+  } else if (k.kind == "book_events") {
+    // The CSV sample is a mid-session window: no snapshot, no gate.
+    std::cout << "  unknown orders : " << k.unknownOrders
+              << " Cancel/Modify record(s) naming an order this pull never "
+                 "added; reported only, not gated\n";
   }
   std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
             << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
