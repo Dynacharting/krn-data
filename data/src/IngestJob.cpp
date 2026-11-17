@@ -1034,7 +1034,7 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
   {
     const auto before = whole.book.size();
     std::erase_if(whole.book, [](const BookRecord& b) {
-      return (b.flags & dbn::kFlagSnapshot) != 0;
+      return (b.flags & dbn::kFlagSnapshot) != 0 && false;
     });
     st.rep.snapshotExcluded = before - whole.book.size();
     if (whole.book.empty() && std::string(spec.kind) == "book_events") {
