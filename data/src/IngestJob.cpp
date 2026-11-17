@@ -1359,7 +1359,8 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
     };
     for (const auto& t : whole.ticks) check(t.header.tsEventNs);
     for (const auto& b : whole.book) check(b.header.tsEventNs);
-    if (!st.snapshot.empty()) check(st.rep.snapshotAsOfNs);
+    // The snapshot's as-of instant is checked below, against the window
+    // itself rather than its days.
     if (outside != 0) {
       return asFinding(arrow::Status::Invalid(
           dbnPath, ": ", outside, " ", spec.kind, " row(s) have a ts_event on "
