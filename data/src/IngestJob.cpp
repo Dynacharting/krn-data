@@ -1506,7 +1506,7 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   };
   std::vector<TableKind> tableKinds{{st.rep.kind, st.table, true}};
   if (st.rep.kind == "book_events") {
-    tableKinds.push_back({"book_snapshots", "book_snapshots", true});
+    tableKinds.push_back({"book_snapshots", "book_snapshots", !st.snapshot.empty()});
   }
 
   // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
@@ -1589,7 +1589,7 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   // state=2 for every window this load owns, on any insert failure.
   const auto failOwned = [&](const arrow::Status& cause) -> arrow::Status {
     for (const auto& tk : tableKinds) {
-      if (!tk.writesOwnWindow) continue;
+      if (!tk.writesOwnWindow || tk.kind == "book_snapshots") continue;
       ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, tk.kind,
                                          st.rep.recordedFromNs, st.rep.recordedToNs,
                                          /*state=*/2, 0, st.sessionId, st.rep.jobId));
