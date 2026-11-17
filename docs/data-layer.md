@@ -1260,13 +1260,19 @@ A transport choice, and any `B2 ≥ B1` comparison, waits for a sample spanning 
 
 ### 14.4 B1 on the NVDA month — ENC-1662, 2026-11-17
 
-**Settles §5.2: native.** The data is the delivered NVDA `XNAS.ITCH` jobs: 9.92 M trades and
-304.0 M book events, 2026-10-16 to 2026-11-16. Over day, week and month ranges, native beats
-HTTP `ArrowStream` by 1.8–2.5× rows/s in all 100 cells, and the p10–p90 bands are disjoint in
-every one.
+**Settles §5.2: native.** The data is the delivered NVDA `XNAS.ITCH` jobs:
 
-- The cost is ClickHouse's own Arrow serialisation. In `system.query_log` the server-side
-  duration and the user CPU track the client wall time.
+- trades: 9.92 M rows, 23 windows, 2026-10-19 to 2026-11-16;
+- mbo: 304.0 M book events, 23 windows, 2026-10-16 to 2026-11-14.
+
+Over day, week and month ranges, native's median beats HTTP `ArrowStream` in every cell. In
+the 100 tabulated cells the margin is 1.8–2.5× rows/s, and the p10–p90 bands are disjoint.
+That set uses a re-take of trades 2026-11-02. Its first take, which passed the load gate, had
+three overlapping cold cells, the lowest at 1.15×.
+
+- The server spends more CPU on the HTTP/Arrow path than on native, and that accounts for most
+  of the gap. Measured in `system.query_log` on the heaviest MBO day: the user-CPU difference
+  is about 70 % of the query-duration difference. Client CPU was not measured.
 - Block size stops helping at `index_granularity` = 8192.
 - Compact parts (< 10 MB) deliver one granule per block whatever `max_block_size` says. That is
   why §14.3's sweep collapsed.
