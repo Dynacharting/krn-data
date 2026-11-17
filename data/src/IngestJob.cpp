@@ -1140,7 +1140,7 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
                              clear.header.tsRecvNs, " are two as-of instants.");
         }
       }
-      st.rep.snapshotAsOfNs = clear.header.tsRecvNs;
+      st.rep.snapshotAsOfNs = clear.header.tsEventNs;
     }
     if (std::string(spec.kind) == "book_events") {
       if (whole.book.empty()) {

@@ -884,7 +884,7 @@ arrow::Status DatabentoAdapter::onMbo(const dbn::MboMsg& m) {
     }
 
     case dbn::Action::Add:
-      if ((flags & dbn::kFlagSnapshot) == 0) trackOrder(key, sz);
+      trackOrder(key, sz);
       emit(BookAction::Add, px, sz, epochOf(m.hd.instrumentId));
       break;
 
