@@ -80,11 +80,14 @@ arrow::Result<Target> resolveTarget(const std::optional<std::string>& explicitUr
 class Client {
  public:
   explicit Client(Target target);
+  virtual ~Client() = default;
 
   // Runs `sql` and returns the response body verbatim. A non-2xx status is an
   // error carrying the server's own message, which is the only useful thing in
-  // a ClickHouse failure.
-  arrow::Result<std::string> exec(std::string_view sql) const;
+  // a ClickHouse failure. Virtual so a test can record the statements the
+  // ingest job sends (ENC-1663, IngestSnapshotTest.cpp); `select` and `scalar`
+  // go through it.
+  virtual arrow::Result<std::string> exec(std::string_view sql) const;
 
   // `exec`, then split the body into rows of fields on '\n' and '\t'. For
   // `FORMAT TabSeparated` reads. A trailing newline yields no empty row.
