@@ -1381,10 +1381,10 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
 // window at state=2 and book_events at 0 rows. Recoverable by reload, and
 // never reported complete, but it destroyed data it could have refused to
 // touch. `apply.py verify` names the drift; this makes the job say so first.
-arrow::Status preflight(const ch::Client& client, const std::string& kind,
-                        const std::string& table) {
+arrow::Status preflightTable(const ch::Client& client, const char* columns,
+                             const std::string& table) {
   std::string q = "SELECT ";
-  q += kind == "trades" ? kTradesColumns : kBookEventsColumns;
+  q += columns;
   q += " FROM krn.";
   q += table;
   q += " LIMIT 0 FORMAT TabSeparated";
@@ -1392,14 +1392,22 @@ arrow::Status preflight(const ch::Client& client, const std::string& kind,
   if (!probe.ok()) {
     return arrow::Status::Invalid(
         "krn.", table, " does not hold every column this build inserts (",
-        kind == "trades" ? kTradesColumns : kBookEventsColumns,
-        "): ", probe.status().message(),
+        columns, "): ", probe.status().message(),
         "\nNothing has been dropped or written. The table predates this "
         "build's schema: `data/schema/apply.py verify` names the difference, "
         "and the remedy is re-creating the table from clickhouse.sql and "
         "reloading from the retained DBN (docs/data-layer.md §8.4).");
   }
   return arrow::Status::OK();
+}
+
+// An mbo load also drops and writes krn.book_snapshots (kSnapshotRuling), so
+// that table is probed too, before anything is dropped.
+arrow::Status preflight(const ch::Client& client, const std::string& kind,
+                        const std::string& table) {
+  if (kind == "trades") return preflightTable(client, kTradesColumns, table);
+  ARROW_RETURN_NOT_OK(preflightTable(client, kBookEventsColumns, table));
+  return preflightTable(client, kBookSnapshotsColumns, "book_snapshots");
 }
 
 // Rows per INSERT statement. The whole day was one statement while a day was
@@ -1419,6 +1427,24 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   for (const auto& b : st.decoded.book) {
     days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(b.header.tsEventNs)));
   }
+  if (!st.snapshot.empty()) {
+    days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(st.rep.snapshotAsOfNs)));
+  }
+
+  // An mbo load drops the same days of krn.book_snapshots as of krn.book_events
+  // (kSnapshotRuling): the snapshot rows of a reloaded day are replaced, and a
+  // reload whose file carries none leaves none behind. So both kinds' windows
+  // on those days are invalidated, and the snapshot window is "own", and left
+  // to its own state=0, only when this load writes one.
+  struct TableKind {
+    std::string kind;
+    std::string table;
+    bool writesOwnWindow;
+  };
+  std::vector<TableKind> tableKinds{{st.rep.kind, st.table, true}};
+  if (st.rep.kind == "book_events") {
+    tableKinds.push_back({"book_snapshots", "book_snapshots", !st.snapshot.empty()});
+  }
 
   // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
   //
@@ -1433,13 +1459,14 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   // partition about to go gets a state=3 (invalidated) row, our own symbol's
   // other windows included (ENC-1635). Only the window being written is
   // left out; the state=0 below covers it. `invalidationTargets` decides.
+  for (const auto& tk : tableKinds) {
   for (const std::uint32_t day : days) {
     const auto dayFrom = static_cast<std::int64_t>(csv::midnightUtcNs(day));
     const std::int64_t dayTo = dayFrom + 86400000000000LL;
     std::ostringstream q;
     q << "SELECT DISTINCT symbol, toUnixTimestamp64Nano(from_ts), "
          "toUnixTimestamp64Nano(to_ts) FROM krn.ingest_windows WHERE kind = "
-      << ch::sqlQuote(st.rep.kind)
+      << ch::sqlQuote(tk.kind)
       << " AND from_ts < fromUnixTimestamp64Nano(toInt64(" << dayTo
       << "), 'UTC') AND to_ts > fromUnixTimestamp64Nano(toInt64(" << dayFrom
       << "), 'UTC') FORMAT TabSeparated";
@@ -1469,33 +1496,74 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
       if (!parseExact(r[2], w.toTsNs)) return badField("to_ts", r[2]);
       intersecting.push_back(std::move(w));
     }
-    for (const auto& w : invalidationTargets(intersecting, st.rep.symbol,
-                                             st.rep.recordedFromNs,
-                                             st.rep.recordedToNs)) {
+    const auto targets =
+        tk.writesOwnWindow ? invalidationTargets(intersecting, st.rep.symbol,
+                                                 st.rep.recordedFromNs,
+                                                 st.rep.recordedToNs)
+                           : intersecting;
+    for (const auto& w : targets) {
       ARROW_RETURN_NOT_OK(writeWindowRow(
-          client, w.symbol, st.rep.kind, w.fromTsNs, w.toTsNs,
+          client, w.symbol, tk.kind, w.fromTsNs, w.toTsNs,
           /*state=*/3, /*rowsInserted=*/0, st.sessionId,
           "invalidated by DROP PARTITION " + std::to_string(day) + " for " +
               st.rep.symbol));
       rep.invalidationRows.push_back(
-          w.symbol + "/" + st.rep.kind + " " + std::to_string(w.fromTsNs) +
+          w.symbol + "/" + tk.kind + " " + std::to_string(w.fromTsNs) +
           ".." + std::to_string(w.toTsNs) + " -> state=3 (partition " +
           std::to_string(day) + ")");
     }
   }
+  }
 
   // ---- state=0, in flight --------------------------------------------
-  ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
-                                     st.rep.recordedFromNs, st.rep.recordedToNs,
-                                     /*state=*/0, /*rowsInserted=*/0,
-                                     st.sessionId, st.rep.jobId));
+  for (const auto& tk : tableKinds) {
+    if (!tk.writesOwnWindow) continue;
+    ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, tk.kind,
+                                       st.rep.recordedFromNs, st.rep.recordedToNs,
+                                       /*state=*/0, /*rowsInserted=*/0,
+                                       st.sessionId, st.rep.jobId));
+  }
+  // state=2 for every window this load owns, on any insert failure.
+  const auto failOwned = [&](const arrow::Status& cause) -> arrow::Status {
+    for (const auto& tk : tableKinds) {
+      if (!tk.writesOwnWindow) continue;
+      ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, tk.kind,
+                                         st.rep.recordedFromNs, st.rep.recordedToNs,
+                                         /*state=*/2, 0, st.sessionId, st.rep.jobId));
+    }
+    return cause;
+  };
 
   // ---- DROP PARTITION, then reload (D5) ------------------------------
-  for (const std::uint32_t day : days) {
-    std::ostringstream q;
-    q << "ALTER TABLE krn." << st.table << " DROP PARTITION " << day;
-    ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
-    rep.partitionsDropped.push_back(st.table + ":" + std::to_string(day));
+  for (const auto& tk : tableKinds) {
+    for (const std::uint32_t day : days) {
+      std::ostringstream q;
+      q << "ALTER TABLE krn." << tk.table << " DROP PARTITION " << day;
+      ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
+      rep.partitionsDropped.push_back(tk.table + ":" + std::to_string(day));
+    }
+  }
+
+  // ---- the snapshot first: the book the day's events apply to ----------
+  //
+  // One INSERT, ordered by provider_seq (ts_event is the one as-of instant),
+  // which stageOne proved puts the Clear first.
+  if (!st.snapshot.empty()) {
+    std::vector<std::size_t> sorder(st.snapshot.size());
+    for (std::size_t i = 0; i < sorder.size(); ++i) sorder[i] = i;
+    std::stable_sort(sorder.begin(), sorder.end(), [&](std::size_t a, std::size_t b) {
+      return st.snapshot[a].header.providerSeq < st.snapshot[b].header.providerSeq;
+    });
+    std::string body = "INSERT INTO krn.book_snapshots (";
+    body += kBookSnapshotsColumns;
+    body += ") FORMAT TabSeparated\n";
+    for (const std::size_t i : sorder) {
+      body += renderSnapshotRow(st.snapshot[i], st.rep.snapshotAsOfNs,
+                                st.decoded.symbol, st.decoded.venue);
+    }
+    const arrow::Status ins = client.exec(body).status();
+    if (!ins.ok()) return failOwned(ins);
+    st.rep.snapshotRowsInserted = st.snapshot.size();
   }
 
   // ---- sort by the physical sort key, then insert ---------------------
@@ -1546,10 +1614,7 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
       // anything but unloaded: the state=0 row above is already the newest, and
       // this makes the failure explicit rather than leaving it in flight
       // forever.
-      ARROW_RETURN_NOT_OK(writeWindowRow(
-          client, st.rep.symbol, st.rep.kind, st.rep.recordedFromNs,
-          st.rep.recordedToNs, /*state=*/2, 0, st.sessionId, st.rep.jobId));
-      return ins;
+      return failOwned(ins);
     }
     inserted = end;
   }
@@ -1579,6 +1644,15 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   }
 
   // ---- state=1, complete ---------------------------------------------
+  //
+  // The snapshot's window first: the day's book_events window must never read
+  // complete while the seed it is replayed from does not (D11).
+  if (!st.snapshot.empty()) {
+    ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, "book_snapshots",
+                                       st.rep.recordedFromNs, st.rep.recordedToNs,
+                                       /*state=*/1, st.rep.snapshotRowsInserted,
+                                       st.sessionId, st.rep.jobId));
+  }
   ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
                                      st.rep.recordedFromNs, st.rep.recordedToNs,
                                      /*state=*/1, inserted, st.sessionId,
