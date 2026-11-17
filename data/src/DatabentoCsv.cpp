@@ -175,7 +175,10 @@ struct Common {
         static_cast<std::int64_t>(tsEvent) + tsInDelta) {
       ++out.tsRecvMatchesDelta;
     }
-    const std::uint32_t day = yyyymmddUtc(tsEvent);
+    // The mapping's days come from the SAME timestamp the adapter resolves
+    // on (dbn::indexTs, ENC-1640). Harvesting ts_event days here while the
+    // adapter keys on ts_recv refused a record received after midnight.
+    const std::uint32_t day = yyyymmddUtc(dbn::indexTs(tsEvent, tsRecv));
     auto& bySym = seen[instrumentId];
     auto it = bySym.find(std::string(symbol));
     if (it == bySym.end()) {
@@ -362,8 +365,14 @@ arrow::Result<PullMetadata> readPullMetadata(const std::string& path) {
       if (s.IsString()) md.symbols.emplace_back(s.GetString());
     }
   }
+  str(q, "encoding", md.encoding);
+  str(q, "compression", md.compression);
   if (doc.HasMember("customizations") && doc["customizations"].IsObject()) {
     const auto& c = doc["customizations"];
+    str(c, "split_duration", md.splitDuration);
+    if (c.HasMember("map_symbols") && c["map_symbols"].IsBool()) {
+      md.mapSymbols = c["map_symbols"].GetBool();
+    }
     if (c.HasMember("pretty_px") && c["pretty_px"].IsBool()) {
       md.prettyPx = c["pretty_px"].GetBool();
     }

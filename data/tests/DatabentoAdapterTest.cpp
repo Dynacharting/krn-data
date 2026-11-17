@@ -1374,6 +1374,7 @@ TEST(DbnSymbologyTest, ARecordOutsideEveryWindowIsRefused) {
                       static_cast<char>(dbn::Side::Bid), 1, 1'000'000'000LL, 1);
   // One day past the mapping's half-open end (20201229).
   m.hd.tsEvent = 1609160400000429831ULL + 2 * 86'400'000'000'000ULL;
+  m.tsRecv     = m.hd.tsEvent;  // symbology keys on ts_recv (ENC-1640)
   w.addMbo(m);
   Harness h;
   const arrow::Status st = h.feed(w.build());
@@ -1388,10 +1389,40 @@ TEST(DbnSymbologyTest, TheWindowIsHalfOpen) {
   dbn::MboMsg m = mbo(static_cast<char>(dbn::Action::Add),
                       static_cast<char>(dbn::Side::Bid), 1, 1'000'000'000LL, 1);
   m.hd.tsEvent = 1609200000000000000ULL;
+  m.tsRecv     = m.hd.tsEvent;  // symbology keys on ts_recv (ENC-1640)
   w.addMbo(m);
   Harness h;
   EXPECT_TRUE(h.feed(w.build()).IsInvalid())
       << "[start, end) — a closed upper bound is what double-delivers a boundary row";
+}
+
+// ENC-1640: the mapping interval is a range of the record's INDEX timestamp,
+// ts_recv, as the vendor defines it. The shape is the delivered mbo day
+// file's start-of-day snapshot: ts_recv at the day's midnight, ts_event the
+// resting order's original time on the PREVIOUS day.
+TEST(DbnSymbologyTest, ResolvesOnTsRecvNotTsEvent) {
+  DbnWriter w = plainWriter();
+  w.mappings = {Mapping{"ESH1", {Interval{20201228, 20201229, "5482"}}}};
+  dbn::MboMsg m = mbo(static_cast<char>(dbn::Action::Add),
+                      static_cast<char>(dbn::Side::Bid), 1, 1'000'000'000LL, 1);
+  m.tsRecv     = 1609113600000000000ULL;                 // 2020-12-28T00:00:00Z
+  m.hd.tsEvent = m.tsRecv - 16ULL * 3'600'000'000'000ULL;  // 2020-12-27T08:00Z
+  w.addMbo(m);
+  {
+    Harness h;
+    const arrow::Status st = h.feed(w.build());
+    ASSERT_TRUE(st.ok()) << st.ToString();
+    ASSERT_EQ(h.a->bookEvents().size(), 1u);
+  }
+  // And the converse: ts_event inside the interval, ts_recv past it, refused.
+  DbnWriter w2 = plainWriter();
+  w2.mappings = w.mappings;
+  dbn::MboMsg m2 = m;
+  m2.hd.tsEvent = 1609113600000000001ULL;  // inside 20201228
+  m2.tsRecv     = 1609200000000000000ULL;  // 20201229, the excluded end
+  w2.addMbo(m2);
+  Harness h2;
+  EXPECT_TRUE(h2.feed(w2.build()).IsInvalid());
 }
 
 TEST(DbnSymbologyTest, AnUnmappedInstrumentIdIsRefused) {
