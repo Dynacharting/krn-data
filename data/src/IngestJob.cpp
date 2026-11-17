@@ -93,8 +93,8 @@ const char* const kGapsNote =
     "than code.";
 
 const char* const kSnapshotRuling =
-    "THE VENDOR'S START-OF-DAY MBO SNAPSHOT IS NOT WRITTEN TO krn.book_events "
-    "(ENC-1640).\n"
+    "THE VENDOR'S START-OF-DAY MBO SNAPSHOT IS WRITTEN TO krn.book_snapshots, "
+    "NOT TO krn.book_events (ENC-1640, ENC-1663).\n"
     "  Every delivered XNAS.ITCH mbo day file opens with a Clear and one Add per "
     "order resting at midnight, all flagged F_SNAPSHOT (and F_BAD_TS_RECV: "
     "ts_recv is the day's midnight). Their ts_event is each order's ORIGINAL "
@@ -103,13 +103,18 @@ const char* const kSnapshotRuling =
     "partition, so the load would DROP that partition (another window's rows), "
     "and a replay of that day ordered by ts_event would meet a Clear and a "
     "duplicate Add of every overnight order in the middle of it.\n"
-    "  They are state, not events, and state is krn.book_snapshots' job "
-    "(docs 8.5), which this job does not write. So they are decoded (the "
-    "adapter's resting-order map is built from them, which is what lets the "
-    "day's Cancels resolve), counted, reported and excluded from the insert. "
-    "Every decoded record is accounted for as a row, a snapshot record, an mbo "
-    "action N or a skipped rtype, or the day is refused. The day's rows carry "
-    "the epoch the snapshot's Clear began; that Clear row is not in L1.";
+    "  They are state, not events. Each is one krn.book_snapshots row whose "
+    "ts_event is the instant the snapshot is AS OF (the records' ts_recv, the "
+    "window's start) and whose order_ts is the order's own ts_event, so the rows "
+    "sit in the partition of the day they seed and a re-ingest of that day "
+    "replaces them and nothing else. The snapshot is recorded complete as its "
+    "own `book_snapshots` window, written state=1 after its rows and BEFORE the "
+    "day's `book_events` window, so a book_events day reads complete only when "
+    "its seed is in L1 too (D11). A delivered mbo day with no snapshot, or one "
+    "that is not a single opening block (a Clear, then Adds, one as-of instant, "
+    "the Clear's provider_seq below every Add's), is refused. Every decoded "
+    "record is accounted for as a row, a snapshot row, an mbo action N or a "
+    "skipped rtype, or the day is refused.";
 
 namespace {
 
@@ -267,6 +272,10 @@ constexpr const char* kBookEventsColumns =
     "ts_event, ts_recv, provider_seq, session_id, symbol, instrument_id, venue, "
     "action, side, aggressor, price, size, order_id, priority, depth, epoch, flags";
 
+constexpr const char* kBookSnapshotsColumns =
+    "ts_event, ts_recv, provider_seq, session_id, symbol, instrument_id, venue, "
+    "order_ts, action, side, price, size, order_id, priority, epoch, flags";
+
 // A field this renderer omits is a field no round-trip assertion covers and no
 // L1 column holds, so the two facts stay tied together. TickRecord's quote half
 // (bidPx/askPx/bidSz/askSz/bidCt/askCt) is omitted because `krn.quotes` is not
@@ -294,6 +303,24 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
      << static_cast<unsigned>(b.aggressor) << '\t' << b.price << '\t' << b.size << '\t'
      << b.orderId << '\t' << b.priority << '\t' << b.depth << '\t' << b.epoch
      << '\t' << b.flags << '\n';
+  return os.str();
+}
+
+// One vendor F_SNAPSHOT record as a krn.book_snapshots row. `asOfNs` is the
+// instant the snapshot is as of and goes in ts_event, the partition key; the
+// record's own ts_event goes in order_ts (kSnapshotRuling). aggressor and
+// depth have no column: a snapshot record is a Clear or an Add, which carry
+// Aggressor::Unknown and depth 0 by construction.
+std::string renderSnapshotRow(const BookRecord& b, std::int64_t asOfNs,
+                              const std::string& symbol, const std::string& venue) {
+  std::ostringstream os;
+  os << asOfNs << '\t' << b.header.tsRecvNs << '\t' << b.header.providerSeq << '\t'
+     << b.header.sessionId << '\t' << ch::tsvEscape(symbol) << '\t'
+     << b.header.instrumentId << '\t' << ch::tsvEscape(venue) << '\t'
+     << b.header.tsEventNs << '\t' << static_cast<unsigned>(b.action) << '\t'
+     << static_cast<unsigned>(b.side) << '\t' << b.price << '\t' << b.size << '\t'
+     << b.orderId << '\t' << b.priority << '\t' << b.epoch << '\t' << b.flags
+     << '\n';
   return os.str();
 }
 
@@ -361,6 +388,9 @@ std::set<std::uint32_t> daysOf(std::int64_t fromNs, std::int64_t toNs) {
 struct Staged {
   KindReport rep;
   Decoded decoded;
+  // The vendor's F_SNAPSHOT block, in file order (Clear first), out of
+  // `decoded.book`. Empty on a pull with no snapshot (the MSFT CSV sample).
+  std::vector<BookRecord> snapshot;
   std::vector<csv::Transcoded::Mapping> mappings;
   std::string table;
   std::string dataset;
@@ -1058,16 +1088,72 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
   }
 
   // ---- the vendor's start-of-day book snapshot (kSnapshotRuling) --------
+  //
+  // Out of `whole.book` and into `st.snapshot`, after its shape is proven: one
+  // opening block, a Clear and then Adds, one as-of instant, and the Clear's
+  // provider_seq below every Add's so the table's sort key replays it in the
+  // order the file gave it. Any other shape is refused before any write: a
+  // seed that is not exactly the vendor's book at one instant is a torn book.
   {
-    const auto before = whole.book.size();
-    std::erase_if(whole.book, [](const BookRecord& b) {
+    const auto isSnap = [](const BookRecord& b) {
       return (b.flags & dbn::kFlagSnapshot) != 0;
-    });
-    st.rep.snapshotExcluded = before - whole.book.size();
-    if (whole.book.empty() && std::string(spec.kind) == "book_events") {
+    };
+    const auto firstEvent = std::find_if_not(whole.book.begin(), whole.book.end(), isSnap);
+    const auto stray = std::count_if(firstEvent, whole.book.end(), isSnap);
+    const auto refuseShape = [&](auto&&... why) {
       return asFinding(arrow::Status::Invalid(
-          dbnPath, " decoded only F_SNAPSHOT book records; there is no event "
-          "in the window to record."));
+          dbnPath, ": the F_SNAPSHOT records are not one start-of-day snapshot: ",
+          why..., " Nothing was written (kSnapshotRuling)."));
+    };
+    if (stray != 0) {
+      return refuseShape(stray, " F_SNAPSHOT record(s) follow the first record "
+                         "that is not one; a snapshot is the file's opening block.");
+    }
+    st.snapshot.assign(whole.book.begin(), firstEvent);
+    whole.book.erase(whole.book.begin(), firstEvent);
+    st.rep.snapshotExcluded = st.snapshot.size();
+    if (!st.snapshot.empty()) {
+      const BookRecord& clear = st.snapshot.front();
+      if (clear.action != BookAction::Clear) {
+        return refuseShape("the first is action ", static_cast<unsigned>(clear.action),
+                           ", not a Clear.");
+      }
+      for (std::size_t i = 1; i < st.snapshot.size(); ++i) {
+        const BookRecord& r = st.snapshot[i];
+        if (r.action != BookAction::Add) {
+          return refuseShape("record ", i, " is action ",
+                             static_cast<unsigned>(r.action), ", not an Add.");
+        }
+        if (r.header.providerSeq <= clear.header.providerSeq) {
+          return refuseShape("Add ", i, " has provider_seq ", r.header.providerSeq,
+                             ", not above the Clear's ", clear.header.providerSeq,
+                             "; ordered by the table's sort key it would replay "
+                             "before the Clear.");
+        }
+      }
+      for (const auto& r : st.snapshot) {
+        if (r.header.tsRecvNs != clear.header.tsRecvNs) {
+          return refuseShape("ts_recv ", r.header.tsRecvNs, " and ",
+                             clear.header.tsRecvNs, " are two as-of instants.");
+        }
+      }
+      st.rep.snapshotAsOfNs = clear.header.tsRecvNs;
+    }
+    if (std::string(spec.kind) == "book_events") {
+      if (whole.book.empty()) {
+        return asFinding(arrow::Status::Invalid(
+            dbnPath, " decoded only F_SNAPSHOT book records; there is no event "
+            "in the window to record."));
+      }
+      if (dbnJob && st.snapshot.empty()) {
+        // A delivered mbo day opens with the vendor's snapshot. Without one the
+        // day's overnight orders cannot be seeded from L1, and a book_events
+        // window recorded complete would not be replayable (D11).
+        return asFinding(arrow::Status::Invalid(
+            dbnPath, " has no F_SNAPSHOT block, so the book its events apply to "
+            "cannot be seeded from L1; the day is not recorded complete "
+            "(kSnapshotRuling)."));
+      }
     }
   }
   st.rep.actionNone = static_cast<std::size_t>(whole.stats.actionNone);
@@ -1262,6 +1348,7 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
     };
     for (const auto& t : whole.ticks) check(t.header.tsEventNs);
     for (const auto& b : whole.book) check(b.header.tsEventNs);
+    if (!st.snapshot.empty()) check(st.rep.snapshotAsOfNs);
     if (outside != 0) {
       return asFinding(arrow::Status::Invalid(
           dbnPath, ": ", outside, " ", spec.kind, " row(s) have a ts_event on "
@@ -1270,6 +1357,16 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
           formatNs(firstOutside), "). Loading them would DROP that day's "
           "partition, which holds another window's rows. Nothing was written."));
     }
+  }
+
+  // The snapshot seeds THIS window, so it must be as of an instant inside it.
+  if (!st.snapshot.empty() && (st.rep.snapshotAsOfNs < st.rep.recordedFromNs ||
+                               st.rep.snapshotAsOfNs >= st.rep.recordedToNs)) {
+    return asFinding(arrow::Status::Invalid(
+        dbnPath, ": the F_SNAPSHOT block is as of ", formatNs(st.rep.snapshotAsOfNs),
+        ", outside the recorded window ",
+        formatWindow(st.rep.recordedFromNs, st.rep.recordedToNs),
+        ". Nothing was written (kSnapshotRuling)."));
   }
 
   st.decoded = std::move(whole);
