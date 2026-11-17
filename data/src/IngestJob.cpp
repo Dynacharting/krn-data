@@ -543,8 +543,10 @@ arrow::Result<std::uint64_t> decompressZstdFile(const std::string& inPath,
         written += static_cast<std::uint64_t>(r->bytes_written);
       }
       if (r->bytes_read == 0 && r->bytes_written == 0) break;  // needs more input
+      if (dec->IsFinished()) goto done;
     }
   }
+done:
   if (std::ferror(in) != 0) return fail(arrow::Status::IOError("read error on ", inPath));
   if (!sawInput || !dec->IsFinished()) {
     return fail(arrow::Status::IOError(
@@ -1034,7 +1036,7 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
   {
     const auto before = whole.book.size();
     std::erase_if(whole.book, [](const BookRecord& b) {
-      return (b.flags & dbn::kFlagSnapshot) != 0 && false;
+      return (b.flags & dbn::kFlagSnapshot) != 0;
     });
     st.rep.snapshotExcluded = before - whole.book.size();
     if (whole.book.empty() && std::string(spec.kind) == "book_events") {
