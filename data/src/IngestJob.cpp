@@ -317,7 +317,7 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
 std::string renderSnapshotRow(const BookRecord& b, std::int64_t asOfNs,
                               const std::string& symbol, const std::string& venue) {
   std::ostringstream os;
-  os << b.header.tsEventNs << '\t' << b.header.tsRecvNs << '\t' << b.header.providerSeq << '\t'
+  os << asOfNs << '\t' << b.header.tsRecvNs << '\t' << b.header.providerSeq << '\t'
      << b.header.sessionId << '\t' << ch::tsvEscape(symbol) << '\t'
      << b.header.instrumentId << '\t' << ch::tsvEscape(venue) << '\t'
      << b.header.tsEventNs << '\t' << static_cast<unsigned>(b.action) << '\t'
@@ -1454,7 +1454,7 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   };
   std::vector<TableKind> tableKinds{{st.rep.kind, st.table, true}};
   if (st.rep.kind == "book_events") {
-    tableKinds.push_back({"book_snapshots", "book_snapshots", !st.snapshot.empty()});
+    // mutated: book_snapshots not dropped
   }
 
   // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
