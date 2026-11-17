@@ -423,7 +423,10 @@ int cmdVerify(const Args& a) {
   const struct {
     const char* kind;
     const char* table;
-  } kinds[] = {{"trades", "trades"}, {"book_events", "book_events"}};
+  } kinds[] = {{"trades", "trades"},
+               {"book_events", "book_events"},
+               // ENC-1663: the vendor snapshot's windows, checked the same way.
+               {"book_snapshots", "book_snapshots"}};
 
   for (const auto& k : kinds) {
     std::cout << "\n================ " << a.symbol << " / " << k.kind
@@ -443,6 +446,13 @@ int cmdVerify(const Args& a) {
     std::cout << "recorded windows resolved : " << wide->resolved
               << ", surviving state=1 after resolution : " << wide->survived << "\n";
     if (wide->covered.empty()) {
+      if (kindMayBeUnrecorded(k.kind)) {
+        // Not a finding: a pull with no vendor snapshot records no such window.
+        // A book_events window that needed one was refused at ingest.
+        std::cout << "  nothing recorded for this (symbol, kind); a pull with no "
+                     "vendor F_SNAPSHOT block records none (not a finding).\n";
+        continue;
+      }
       std::cout << "  NOTHING is recorded as complete for this (symbol, kind). "
                    "Run `krn_ingest ingest` first.\n";
       ++findings;
@@ -594,10 +604,12 @@ int cmdVerify(const Args& a) {
         std::cerr << "krn_ingest: " << actual.status().ToString() << "\n";
         return kCouldNotRun;
       }
-      if (claimedN > 0 && *actual == 0) {
+      const CountRefutation ref = refuteByCount(
+          k.kind, static_cast<std::uint64_t>(claimedN < 0 ? 0 : claimedN), *actual);
+      if (ref.refuted) {
         std::cout << "  [FAIL] the state=1 window "
-                  << ingest::formatWindow(w.fromNs, w.toNs) << " claims "
-                  << claimedN << " inserted row(s) and holds ZERO.\n"
+                  << ingest::formatWindow(w.fromNs, w.toNs) << " " << ref.reason
+                  << " (krn." << k.table << ").\n"
                      "         The read rule is behaving correctly over a table "
                      "that has been lied to — the usual\n"
                      "         cause is a DROP PARTITION that did not go through "
