@@ -27,6 +27,7 @@
 namespace {
 
 using namespace krn::data;
+using namespace krn::data::ingest;
 
 constexpr std::int64_t kMidnight = 1793059200000000000LL;  // 2026-10-27T00:00Z
 constexpr std::int64_t kDay      = 86400000000000LL;
@@ -38,7 +39,9 @@ BookRecord rec(BookAction action, std::uint64_t seq, std::uint64_t orderId,
   r.action             = action;
   r.header.providerSeq = seq;
   r.header.tsRecvNs    = tsRecv;
-  r.header.tsEventNs   = tsRecv - 3600000000000LL;  // the order's own, earlier time
+  // A snapshot record's ts_event is the order's own, earlier time; an event's
+  // is its own instant inside the window.
+  r.header.tsEventNs   = (flags & kSnap) != 0 ? tsRecv - 3600000000000LL : tsRecv;
   r.orderId            = orderId;
   r.side               = action == BookAction::Add ? Side::Bid : Side::None;
   r.flags              = flags;
@@ -243,6 +246,7 @@ ingest::BookDayLoad nvdaDay(bool withSnapshot) {
     d.snapshotAsOfNs = kMidnight;
   } else {
     book[0].flags = 0;  // an unflagged opening Clear stays an event
+    book[0].header.tsEventNs = kMidnight;
     d.events.assign(book.begin(), book.begin() + 1);
   }
   d.events.push_back(book.back());
