@@ -90,6 +90,7 @@ struct SnapshotLevel {
   std::uint32_t orderCount = 0;
 };
 
+// NOTE: no longer matches the L1 `krn.book_snapshots` table, which is one row per order since ENC-1663.
 // One ROW of `book_snapshots`: a level, plus the header, plus the resume seq
 // the snapshot was taken at (`onSnapshotPerOrder`'s snapshotSeq). A snapshot is
 // many rows sharing one snapshotSeq; the level alone is not addressable, which

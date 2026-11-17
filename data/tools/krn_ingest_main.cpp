@@ -263,10 +263,27 @@ void printKind(const ingest::KindReport& k) {
   std::cout << "  canonical rows : " << k.canonicalRows << "\n";
   if (k.snapshotExcluded != 0 || k.actionNone != 0) {
     std::cout << "  not rows       : " << k.snapshotExcluded
-              << " F_SNAPSHOT record(s) excluded (see the snapshot ruling), "
-              << k.actionNone << " mbo action N\n";
+              << " F_SNAPSHOT record(s), not krn." << k.kind
+              << " rows (see the snapshot ruling), " << k.actionNone
+              << " mbo action N\n";
   }
   std::cout << "  rows inserted  : " << k.rowsInserted << "\n";
+  if (k.snapshotExcluded != 0) {
+    std::cout << "  snapshot       : " << k.snapshotRowsInserted
+              << " row(s) inserted into krn.book_snapshots, as of "
+              << ingest::formatNs(k.snapshotAsOfNs) << "\n";
+  }
+  if (k.kind == "book_events" && !k.condition.empty()) {
+    // A delivered DBN day: this count is gated (kSnapshotRuling).
+    std::cout << "  unknown orders : " << k.unknownOrders
+              << " Cancel/Modify record(s) naming an order the snapshot and "
+                 "the day's Adds did not introduce (must be 0)\n";
+  } else if (k.kind == "book_events") {
+    // The CSV sample is a mid-session window: no snapshot, no gate.
+    std::cout << "  unknown orders : " << k.unknownOrders
+              << " Cancel/Modify record(s) naming an order this pull never "
+                 "added; reported only, not gated\n";
+  }
   std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
             << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
                "written as holes; "
@@ -412,7 +429,10 @@ int cmdVerify(const Args& a) {
   const struct {
     const char* kind;
     const char* table;
-  } kinds[] = {{"trades", "trades"}, {"book_events", "book_events"}};
+  } kinds[] = {{"trades", "trades"},
+               {"book_events", "book_events"},
+               // ENC-1663: the vendor snapshot's windows, checked the same way.
+               {"book_snapshots", "book_snapshots"}};
 
   for (const auto& k : kinds) {
     std::cout << "\n================ " << a.symbol << " / " << k.kind
@@ -432,6 +452,13 @@ int cmdVerify(const Args& a) {
     std::cout << "recorded windows resolved : " << wide->resolved
               << ", surviving state=1 after resolution : " << wide->survived << "\n";
     if (wide->covered.empty()) {
+      if (kindMayBeUnrecorded(k.kind)) {
+        // Not a finding: a pull with no vendor snapshot records no such window.
+        // A book_events window that needed one was refused at ingest.
+        std::cout << "  nothing recorded for this (symbol, kind); a pull with no "
+                     "vendor F_SNAPSHOT block records none (not a finding).\n";
+        continue;
+      }
       std::cout << "  NOTHING is recorded as complete for this (symbol, kind). "
                    "Run `krn_ingest ingest` first.\n";
       ++findings;
@@ -541,6 +568,10 @@ int cmdVerify(const Args& a) {
     // `survivingWindows` — the UNMERGED windows that the read rule already
     // resolved to `state = 1` — and asks the table about exactly that
     // `(from_ts, to_ts)`.
+    //
+    // `refuteByCount` (IngestWindows.hpp) holds the rule: zero under a claim
+    // refutes it for every kind, and for `book_snapshots` any difference does
+    // (ENC-1663).
     for (const auto& w : wide->survivingWindows) {
       std::ostringstream q;
       q << "SELECT rows_inserted, toUnixTimestamp64Milli(updated_at) "
@@ -583,16 +614,18 @@ int cmdVerify(const Args& a) {
         std::cerr << "krn_ingest: " << actual.status().ToString() << "\n";
         return kCouldNotRun;
       }
-      if (claimedN > 0 && *actual == 0) {
+      const CountRefutation ref = refuteByCount(
+          k.kind, static_cast<std::uint64_t>(claimedN < 0 ? 0 : claimedN), *actual);
+      if (ref.refuted) {
         std::cout << "  [FAIL] the state=1 window "
-                  << ingest::formatWindow(w.fromNs, w.toNs) << " claims "
-                  << claimedN << " inserted row(s) and holds ZERO.\n"
+                  << ingest::formatWindow(w.fromNs, w.toNs) << " " << ref.reason
+                  << " (krn." << k.table << ").\n"
                      "         The read rule is behaving correctly over a table "
                      "that has been lied to — the usual\n"
-                     "         cause is a DROP PARTITION that did not go through "
-                     "the ingest job (it writes a\n"
-                     "         state=3 or state=0 row first; a hand-typed ALTER "
-                     "does not). Run `krn_ingest reload`.\n";
+                     "         cause is a DROP PARTITION or an INSERT that did not "
+                     "go through the ingest job (it\n"
+                     "         writes a state=3 or state=0 row first; a hand-typed "
+                     "statement does not). Run `krn_ingest reload`.\n";
         ++findings;
       } else {
         std::cout << "  [ok]   the state=1 claim on "

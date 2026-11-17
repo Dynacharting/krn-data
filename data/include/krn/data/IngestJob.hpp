@@ -27,11 +27,12 @@
 // benchmark. And no B1/B2 number — at 1000 records fixed costs dominate and a
 // rows/sec from this would be a wrong number, not a weak one (ENC-1485/1487).
 //
-// `book_snapshots` IS NOT WRITTEN, and that is a scope statement rather than
-// an omission. A snapshot is reconstructed book STATE (docs §8.5) and
-// reconstructing it is `OrderBookManager`'s job — the single implementation —
-// which this job does not drive. With a 68-second MBO window there is also no
-// session open to snapshot at.
+// `book_snapshots` HOLDS THE VENDOR'S START-OF-DAY SNAPSHOT ONLY (ENC-1663).
+// A delivered mbo day file opens with a Clear and one Add per resting order,
+// flagged F_SNAPSHOT; those records are written there, one row each, keyed to
+// the day's window, and recorded as a `book_snapshots` window. A cadence
+// snapshot reconstructed by `OrderBookManager` (docs §8.5) is still not built:
+// this job does not drive the book. See `kSnapshotRuling`.
 //
 // `gaps` IS NOT WRITTEN EITHER, and the reason is a measurement rather than
 // scope: see `Report::gapsNote` and Gaps.hpp. The job REFUSES to infer a gap
@@ -40,6 +41,7 @@
 // vendor flagged F_MAYBE_BAD_BOOK.
 //
 
+#include "krn/data/BookRecord.hpp"
 #include "krn/data/ClickHouseHttp.hpp"
 #include "krn/data/DatabentoCsv.hpp"
 #include "krn/data/IngestWindows.hpp"
@@ -211,8 +213,15 @@ struct KindReport {
   std::string   dbnVersionNote;   // "DBN v1" etc., from the decoded metadata
   std::string   condition;        // condition.json, DBN job only
   // mbo records flagged F_SNAPSHOT: the vendor's start-of-day book snapshot.
-  // Not written to krn.book_events: see `kSnapshotRuling`.
-  std::size_t   snapshotExcluded = 0;
+  // Not written to krn.book_events; written to krn.book_snapshots, and
+  // `snapshotRowsInserted` is what was sent there. See `kSnapshotRuling`.
+  std::size_t   snapshotExcluded     = 0;
+  std::size_t   snapshotRowsInserted = 0;
+  // The instant the snapshot is as of (the records' ts_recv); 0 if none.
+  std::int64_t  snapshotAsOfNs       = 0;
+  // Cancel/Modify records naming an order the adapter's map (seeded by the
+  // snapshot) did not hold. A delivered mbo day is refused unless 0.
+  std::uint64_t unknownOrders        = 0;
   std::size_t   actionNone       = 0;  // mbo action N, decoded and row-less
 };
 
@@ -298,6 +307,52 @@ std::vector<RecordedWindow> invalidationTargets(
 // only thing `main` needs. See Verdict.hpp for why the classification is
 // explicit at the refusal site rather than inferred from a status code.
 arrow::Result<Report> run(const Options& opts);
+
+// ---------------------------------------------------------------------------
+// The vendor start-of-day snapshot's gates (ENC-1663, `kSnapshotRuling`).
+// Each refusal is a FINDING (exit 1) raised before any write. Exposed so each
+// can be tested on small in-memory records (IngestSnapshotTest.cpp).
+// ---------------------------------------------------------------------------
+
+// Moves the opening F_SNAPSHOT block of `book` (decode order) into `snapshot`
+// and sets `asOfNs` to its ts_recv. Refused: an F_SNAPSHOT record after the
+// first that is not one; a first record that is not a Clear; a non-Add after
+// the Clear; an Add whose provider_seq is not above the Clear's; two ts_recv
+// values. No block leaves `book` untouched, `snapshot` empty and `asOfNs` 0.
+arrow::Status splitSnapshot(std::vector<BookRecord>& book,
+                            std::vector<BookRecord>& snapshot, std::int64_t& asOfNs,
+                            const std::string& where);
+
+// The snapshot must be as of exactly the recorded window's start.
+arrow::Status checkSnapshotAsOf(std::int64_t asOfNs, std::int64_t windowFromNs,
+                                std::int64_t windowToNs, const std::string& where);
+
+// D11 for a delivered mbo day: with no snapshot the first event must be an
+// unflagged Clear, and no Cancel/Modify may name an unknown order (and none
+// may have been evicted from the adapter's map).
+arrow::Status checkDeliveredBookDay(const std::vector<BookRecord>& events,
+                                    std::size_t snapshotRecords,
+                                    std::uint64_t unknownOrders,
+                                    std::uint64_t evictedOrders,
+                                    const std::string& where);
+
+// Pass 2 (drop, insert, record) of ONE staged book_events window, as `run`
+// does it after staging. Exposed so the statements it sends — the two-kind
+// invalidation, the snapshot window's ordering, `state = 2` on both windows
+// on an insert failure — are testable against a recording `ch::Client`.
+struct BookDayLoad {
+  std::string symbol;
+  std::string venue;
+  std::string jobId;
+  std::int64_t fromNs = 0;
+  std::int64_t toNs   = 0;
+  std::uint32_t sessionId = 0;
+  std::vector<BookRecord> events;
+  std::vector<BookRecord> snapshot;
+  std::int64_t snapshotAsOfNs = 0;
+};
+arrow::Status loadBookDay(const ch::Client& client, const BookDayLoad& day,
+                          Report& rep);
 
 // ---------------------------------------------------------------------------
 // The completeness read (D11), against a live server.

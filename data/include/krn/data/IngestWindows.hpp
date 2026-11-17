@@ -110,4 +110,30 @@ Completeness isComplete(const std::vector<IngestWindowRow>& rows,
 // complete" is a claim worth testing directly.
 std::vector<Interval> mergeIntervals(std::vector<Interval> in);
 
+// ---------------------------------------------------------------------------
+// The one admissible count (docs §8.8): a count can REFUTE a `state = 1`
+// claim, never establish one. `claimed` is the surviving window's
+// `rows_inserted`, `actual` the rows of `kind`'s table in its [from, to).
+//
+//   * every kind: a claim of N > 0 rows over ZERO rows is refuted. That is a
+//     DROP PARTITION that did not go through the ingest job.
+//   * `book_snapshots` (ENC-1663): ANY difference is refuted. Every row of a
+//     snapshot window is as of the window's start, and a load invalidates
+//     every other window on the day it drops, so the range holds exactly that
+//     snapshot's rows; fewer is a torn seed, more is a duplicated one. The
+//     event tables keep the zero-only rule, because rows of another surviving
+//     window can share their range.
+// ---------------------------------------------------------------------------
+struct CountRefutation {
+  bool refuted = false;
+  std::string reason;  // empty when not refuted
+};
+CountRefutation refuteByCount(const std::string& kind, std::uint64_t claimed,
+                              std::int64_t actual);
+
+// Whether `verify` may find NOTHING recorded for a (symbol, kind) without that
+// being a finding. True for `book_snapshots` only: a pull with no vendor
+// snapshot (the MSFT sample, the NVDA job's Mondays) records no such window.
+bool kindMayBeUnrecorded(const std::string& kind);
+
 }  // namespace krn::data

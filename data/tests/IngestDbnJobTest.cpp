@@ -6,7 +6,8 @@
 // window arithmetic. No market data is synthesized: the day files are
 // zero-byte placeholders whose names and manifest sizes are the subject, and
 // nothing decodes them. The second reads Nick's real NVDA trades job at
-// `KRN_DATA_NVDA_TRADES_JOB` (data/CMakeLists.txt) through `ingest::run` with
+// `KRN_DATA_NVDA_TRADES_JOB`, and one day of the mbo job at
+// `KRN_DATA_NVDA_MBO_JOB` (data/CMakeLists.txt), through `ingest::run` with
 // no insert; a missing job FAILS, never skips (a skip reads like a pass,
 // ENC-1095). Licensed vendor data stays outside every working tree.
 //
@@ -299,6 +300,41 @@ TEST(IngestDbnJob, RealNvdaTradesDayDecodesEveryRecordIntoTheDayWindow) {
       << "the delivered file is the D6 retained file and is never written";
   EXPECT_TRUE(std::filesystem::is_empty(scratch.dir()))
       << "the decompressed copy is deleted once decoded";
+}
+
+// ENC-1663: one NVDA mbo day, decoded with no insert. 2026-11-07 is a
+// Saturday file: 27309 records, of which 10681 are the vendor's start-of-day
+// snapshot (one Clear, 10680 Adds), so the case is cheap and the snapshot is
+// most of it. The snapshot is staged for krn.book_snapshots, not counted as
+// book_events rows, is as of the window's start, and seeds every Cancel and
+// Modify of the day.
+TEST(IngestDbnJob, RealNvdaMboDayStagesItsSnapshotAsOfTheWindowStart) {
+  const std::string job = KRN_DATA_NVDA_MBO_JOB;
+  const std::string file = job + "/xnas-itch-20261107.mbo.dbn.zst";
+  ASSERT_TRUE(std::filesystem::exists(file))
+      << file << " is missing. Point -DKRN_DATA_NVDA_MBO_JOB=<dir> at the "
+                 "delivered NVDA mbo job (ENC-1663); this case fails rather "
+                 "than skips.";
+  JobDir scratch;
+  ingest::Options o;
+  o.dbnJobDir  = job;
+  o.scratchDir = scratch.dir();
+  o.days       = {20261107};
+  o.noInsert   = true;
+  auto rep = ingest::run(o);
+  ASSERT_TRUE(rep.ok()) << rep.status().ToString();
+  ASSERT_EQ(rep->kinds.size(), 1u);
+  const auto& k = rep->kinds[0];
+  constexpr std::int64_t k1107 = static_cast<std::int64_t>(k1027 + 11 * kDay);
+  EXPECT_EQ(k.kind, "book_events");
+  EXPECT_EQ(k.decodedRecords, 27309u);
+  EXPECT_EQ(k.snapshotExcluded, 10681u);
+  EXPECT_EQ(k.canonicalRows, 27309u - 10681u);
+  EXPECT_EQ(k.snapshotAsOfNs, k1107);
+  EXPECT_EQ(k.recordedFromNs, k1107);
+  EXPECT_EQ(k.recordedToNs, k1107 + static_cast<std::int64_t>(kDay));
+  EXPECT_EQ(k.unknownOrders, 0u);
+  EXPECT_EQ(k.snapshotRowsInserted, 0u) << "noInsert writes nothing";
 }
 
 // ENC-1640 review finding 3: a file already in --scratch under the name the
