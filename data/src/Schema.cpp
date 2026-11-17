@@ -491,6 +491,7 @@ std::shared_ptr<arrow::Schema> bookEventsSchema() {
   return s;
 }
 
+// NOTE: no longer matches the L1 `krn.book_snapshots` table, which is one row per order since ENC-1663.
 std::shared_ptr<arrow::Schema> bookSnapshotsSchema() {
   static const auto s = makeSchema({
       // The resume seq the snapshot was taken at — OrderBookManager's

@@ -562,6 +562,10 @@ int cmdVerify(const Args& a) {
     // `survivingWindows` — the UNMERGED windows that the read rule already
     // resolved to `state = 1` — and asks the table about exactly that
     // `(from_ts, to_ts)`.
+    //
+    // `refuteByCount` (IngestWindows.hpp) holds the rule: zero under a claim
+    // refutes it for every kind, and for `book_snapshots` any difference does
+    // (ENC-1663).
     for (const auto& w : wide->survivingWindows) {
       std::ostringstream q;
       q << "SELECT rows_inserted, toUnixTimestamp64Milli(updated_at) "
@@ -612,10 +616,10 @@ int cmdVerify(const Args& a) {
                   << " (krn." << k.table << ").\n"
                      "         The read rule is behaving correctly over a table "
                      "that has been lied to — the usual\n"
-                     "         cause is a DROP PARTITION that did not go through "
-                     "the ingest job (it writes a\n"
-                     "         state=3 or state=0 row first; a hand-typed ALTER "
-                     "does not). Run `krn_ingest reload`.\n";
+                     "         cause is a DROP PARTITION or an INSERT that did not "
+                     "go through the ingest job (it\n"
+                     "         writes a state=3 or state=0 row first; a hand-typed "
+                     "statement does not). Run `krn_ingest reload`.\n";
         ++findings;
       } else {
         std::cout << "  [ok]   the state=1 claim on "

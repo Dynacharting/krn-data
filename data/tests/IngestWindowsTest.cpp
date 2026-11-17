@@ -415,5 +415,42 @@ TEST(IngestWindowsAntiVacuity, EveryCaseInThisFileIsRegistered) {
                           "letting the count drift";
 }
 
+// ENC-1663: the one admissible count, per kind. A state=1 snapshot window over
+// an empty partition (falsification 1 measured one: the rows had landed in the
+// previous day's partition) is refuted, and so is a torn or doubled snapshot;
+// the event tables keep the zero-only rule.
+TEST(IngestWindowsCount, ZeroUnderAClaimIsRefutedForEveryKind) {
+  for (const std::string kind : {"trades", "book_events", "book_snapshots"}) {
+    const auto r = refuteByCount(kind, 4116, 0);
+    EXPECT_TRUE(r.refuted) << kind;
+    EXPECT_NE(r.reason.find("ZERO"), std::string::npos) << kind << ": " << r.reason;
+  }
+}
+
+TEST(IngestWindowsCount, ASnapshotWindowMustHoldExactlyItsClaim) {
+  EXPECT_FALSE(refuteByCount("book_snapshots", 4116, 4116).refuted);
+  EXPECT_TRUE(refuteByCount("book_snapshots", 4116, 4115).refuted) << "a torn seed";
+  EXPECT_TRUE(refuteByCount("book_snapshots", 4116, 8232).refuted) << "a doubled seed";
+  EXPECT_TRUE(refuteByCount("book_snapshots", 0, 1).refuted);
+}
+
+TEST(IngestWindowsCount, EventTablesKeepTheZeroOnlyRule) {
+  // Another surviving window's rows can share an event window's range, so a
+  // count above or below the claim proves nothing there.
+  for (const std::string kind : {"trades", "book_events"}) {
+    EXPECT_FALSE(refuteByCount(kind, 1000, 1000).refuted) << kind;
+    EXPECT_FALSE(refuteByCount(kind, 1000, 999).refuted) << kind;
+    EXPECT_FALSE(refuteByCount(kind, 1000, 2000).refuted) << kind;
+    EXPECT_FALSE(refuteByCount(kind, 0, 0).refuted) << kind;
+  }
+  EXPECT_TRUE(refuteByCount("trades", 0, -1).refuted) << "not a count";
+}
+
+TEST(IngestWindowsCount, OnlySnapshotsMayBeUnrecorded) {
+  EXPECT_TRUE(kindMayBeUnrecorded("book_snapshots"));
+  EXPECT_FALSE(kindMayBeUnrecorded("book_events"));
+  EXPECT_FALSE(kindMayBeUnrecorded("trades"));
+}
+
 }  // namespace
 }  // namespace krn::data
