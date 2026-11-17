@@ -410,7 +410,7 @@ TEST(IngestWindowsAntiVacuity, EveryCaseInThisFileIsRegistered) {
     const std::string name = suite->name();
     if (name.rfind("IngestWindows", 0) == 0) found += suite->total_test_count();
   }
-  EXPECT_EQ(found, 22) << "the IngestWindows* suites in this file lost or gained "
+  EXPECT_EQ(found, 26) << "the IngestWindows* suites in this file lost or gained "
                           "a case; update the number deliberately rather than "
                           "letting the count drift";
 }
