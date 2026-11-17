@@ -232,6 +232,7 @@ void usage() {
       "  --caches <..>          cold,warm\n"
       "  --warm-iters <n>       timed warm runs per cell (default 200)\n"
       "  --cold-iters <n>       timed cold runs per cell (default 30)\n"
+      "  --warmup-iters <n>     untimed runs before each warm cell (default 5)\n"
       "  --host-data-dir <p>    host path bind-mounted at /var/lib/clickhouse;\n"
       "                         REQUIRED for cold (it is what gets evicted)\n"
       "  --csv <file>           write every timed run as a CSV row\n"
@@ -271,6 +272,7 @@ Args parseArgs(int argc, char** argv) {
     else if (f == "--caches") a.caches = splitList(next());
     else if (f == "--warm-iters") a.warmIters = parseInt(f, next());
     else if (f == "--cold-iters") a.coldIters = parseInt(f, next());
+    else if (f == "--warmup-iters") a.warmupIters = parseInt(f, next());
     else if (f == "--host-data-dir") a.hostDataDir = next();
     else if (f == "--csv") a.csvOut = next();
     else if (f == "--where") a.where = next();
