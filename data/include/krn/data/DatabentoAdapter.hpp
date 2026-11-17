@@ -382,6 +382,18 @@ struct Metadata {
   std::size_t   endPadding    = 0;
 };
 
+// The timestamp a DBN symbology interval is a date range OF (ENC-1640): the
+// record's index timestamp, ts_recv, as databento-cpp's `TsSymbolMap` uses it,
+// falling back to ts_event when ts_recv is 0, undefined or does not fit the
+// signed column. ONE definition, used by the adapter to RESOLVE and by the CSV
+// transcoder to HARVEST the intervals it writes, so the two cannot disagree.
+inline std::uint64_t indexTs(std::uint64_t tsEvent, std::uint64_t tsRecv) {
+  const bool usable =
+      tsRecv != 0 && tsRecv != kUndefTimestamp &&
+      tsRecv <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  return usable ? tsRecv : tsEvent;
+}
+
 }  // namespace dbn
 
 // ===========================================================================

@@ -169,6 +169,22 @@ TEST(IngestDbnJob, EncodingOtherThanDbnIsExit2) {
   EXPECT_NE(plan.status().message().find("encoding"), std::string::npos);
 }
 
+// ENC-1640 review finding 2: a job-level limit is cut across day files and
+// the short day cannot be identified, so it is refused.
+TEST(IngestDbnJob, AJobLevelLimitIsExit2) {
+  JobDir j;
+  makeJob(j, "trades", "trades", {"20261027"}, k1027, k1027 + kDay);
+  std::string m = metadata("trades", "dbn", k1027, k1027 + kDay);
+  const auto at = m.find("\"limit\":null");
+  ASSERT_NE(at, std::string::npos);
+  m.replace(at, 12, "\"limit\":1000");
+  j.write("metadata.json", m);
+  const auto plan = ingest::planDbnJob(j.dir(), {});
+  ASSERT_FALSE(plan.ok());
+  EXPECT_EQ(exitCodeFor(plan.status()), 2) << plan.status().ToString();
+  EXPECT_NE(plan.status().message().find("limit"), std::string::npos);
+}
+
 TEST(IngestDbnJob, CompressionSplitManifestAndDayAreChecked) {
   {
     JobDir j;
@@ -283,6 +299,59 @@ TEST(IngestDbnJob, RealNvdaTradesDayDecodesEveryRecordIntoTheDayWindow) {
       << "the delivered file is the D6 retained file and is never written";
   EXPECT_TRUE(std::filesystem::is_empty(scratch.dir()))
       << "the decompressed copy is deleted once decoded";
+}
+
+// ENC-1640 review finding 3: a file already in --scratch under the name the
+// decompressed copy would naturally take is neither overwritten nor deleted.
+TEST(IngestDbnJob, AnExistingScratchFileIsNotClobbered) {
+  const std::string job = KRN_DATA_NVDA_TRADES_JOB;
+  ASSERT_TRUE(std::filesystem::exists(job + "/xnas-itch-20261027.trades.dbn.zst"));
+  JobDir scratch;
+  scratch.write("xnas-itch-20261027.trades.dbn", "somebody else's file");
+  ingest::Options o;
+  o.dbnJobDir  = job;
+  o.scratchDir = scratch.dir();
+  o.days       = {20261027};
+  o.noInsert   = true;
+  auto rep = ingest::run(o);
+  ASSERT_TRUE(rep.ok()) << rep.status().ToString();
+  std::ifstream in(scratch.dir() + "/xnas-itch-20261027.trades.dbn", std::ios::binary);
+  const std::string got((std::istreambuf_iterator<char>(in)), {});
+  EXPECT_EQ(got, "somebody else's file");
+  std::size_t n = 0;
+  for ([[maybe_unused]] const auto& e : std::filesystem::directory_iterator(scratch.dir())) ++n;
+  EXPECT_EQ(n, 1u) << "and the run's own scratch copy is gone";
+}
+
+// ENC-1640 review finding 4: the ticker the DBN's own symbology resolves to
+// must be one query.symbols names. A metadata.json naming another symbol,
+// beside symlinks to the real files, is refused with exit 2.
+TEST(IngestDbnJob, ADecodedSymbolNotInTheQueryIsExit2) {
+  const std::string job = KRN_DATA_NVDA_TRADES_JOB;
+  ASSERT_TRUE(std::filesystem::exists(job + "/metadata.json"));
+  JobDir j;
+  for (const auto& e : std::filesystem::directory_iterator(job)) {
+    const auto name = e.path().filename().string();
+    if (name == "metadata.json" || e.path().extension() == ".zip") continue;
+    std::filesystem::create_symlink(e.path(), std::filesystem::path(j.dir()) / name);
+  }
+  std::ifstream in(job + "/metadata.json", std::ios::binary);
+  std::string m((std::istreambuf_iterator<char>(in)), {});
+  const auto at = m.find("\"NVDA\"");
+  ASSERT_NE(at, std::string::npos);
+  m.replace(at, 6, "\"MSFT\"");
+  j.write("metadata.json", m);
+  JobDir scratch;
+  ingest::Options o;
+  o.dbnJobDir  = j.dir();
+  o.scratchDir = scratch.dir();
+  o.days       = {20261027};
+  o.noInsert   = true;
+  auto rep = ingest::run(o);
+  ASSERT_FALSE(rep.ok());
+  EXPECT_EQ(exitCodeFor(rep.status()), 2) << rep.status().ToString();
+  EXPECT_NE(rep.status().message().find("query.symbols"), std::string::npos)
+      << rep.status().ToString();
 }
 
 }  // namespace

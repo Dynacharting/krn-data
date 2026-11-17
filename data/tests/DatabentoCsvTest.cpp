@@ -562,6 +562,29 @@ TEST(DatabentoCsvTranscode, ATradesCsvDecodesToBookNeutralTicks) {
   EXPECT_EQ(ticks[1].aggressor, Aggressor::Unknown) << "DBN side 'N'";
 }
 
+// ENC-1640 review finding 1: the transcoder harvests the symbology interval
+// it writes from the SAME timestamp the adapter resolves on (dbn::indexTs,
+// ts_recv). A print at 23:59:59.999999999 received 5 ns after midnight: with
+// ts_event days harvested, the interval ended at 20220611 (exclusive) and the
+// adapter, keying on ts_recv, refused the record.
+TEST(DatabentoCsvTranscode, ARecordReceivedAfterMidnightStillResolves) {
+  const TempDir d;
+  const auto p = d.file("x.csv", std::string(kTradesHeader) +
+                                     tradeRow(kT0, 'A', 265760000000LL, 14, 5) +
+                                     tradeRow(kNextDay - 1, 'B', 265700000000LL, 2, 6, 6));
+  const auto t = transcodeTradesCsv(p, md("trades"));
+  ASSERT_TRUE(t.ok()) << t.status().ToString();
+  SymbolTable symbols;
+  SymbolTable venues;
+  DatabentoAdapter adapter(DatabentoAdapter::Config{}, symbols, venues);
+  const auto fed = adapter.feed(std::span<const std::byte>(t->dbn.data(), t->dbn.size()));
+  ASSERT_TRUE(fed.ok()) << fed.ToString();
+  ASSERT_TRUE(adapter.finish().ok());
+  ASSERT_EQ(adapter.trades().size(), 2u);
+  ASSERT_EQ(t->mappings.size(), 1u);
+  EXPECT_EQ(t->mappings[0].lastDay, 20220611u) << "the ts_recv day, not ts_event's";
+}
+
 TEST(DatabentoCsvTranscode, EveryDbnVersionTheAdapterAcceptsRoundTrips) {
   const TempDir d;
   const auto p = d.file(
@@ -1255,7 +1278,7 @@ TEST(DatabentoCsvAntiVacuity, EveryCaseInThisFileIsRegistered) {
       found += suite->total_test_count();
     }
   }
-  EXPECT_EQ(found, 48) << "the DatabentoCsv* suites in this file lost or gained a "
+  EXPECT_EQ(found, 49) << "the DatabentoCsv* suites in this file lost or gained a "
                           "case; update the number deliberately rather than "
                           "letting the count drift";
 }

@@ -11,7 +11,11 @@
 #include <arrow/util/compression.h>
 #include <rapidjson/document.h>
 
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -603,6 +607,14 @@ arrow::Result<DbnJobPlan> planDbnJob(const std::string& dirIn,
                   "window.");
   }
   if (md.jobId.empty()) return refuse("job_id is missing.");
+  // A JOB-LEVEL `limit` is cut across the day files: the day it ends inside
+  // is short, and nothing in that day's file says so (its own DBN limit is
+  // 0), so it would be recorded state=1 over a prefix — SPEC D11's failure.
+  if (md.limit != 0) {
+    return refuse("query.limit is ", md.limit, "; a limited pull split by day "
+                  "cannot say which day it cut short. Re-request with limit null.");
+  }
+  if (md.symbols.empty()) return refuse("query.symbols is empty.");
   if (md.schema == "trades") {
     plan.kind = "trades";
   } else if (md.schema == "mbo") {
@@ -779,8 +791,23 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
     // decompressed into scratch; nothing here can write to `dbnPath`.
     const std::string base =
         dbnPath.substr(dbnPath.rfind('/') + 1, dbnPath.size() - dbnPath.rfind('/') - 5);
-    const std::string scratch = expandTilde(opts.scratchDir) + "/" + base;
-    ARROW_ASSIGN_OR_RAISE(st.rep.decompressedBytes, decompressZstdFile(dbnPath, scratch));
+    // A UNIQUE scratch name, created exclusively: a fixed name would overwrite
+    // (and then delete) a same-named file already in --scratch, and two runs
+    // sharing --scratch would decode each other's bytes.
+    std::string tmpl = expandTilde(opts.scratchDir) + "/" + base + ".XXXXXX";
+    const int fd = ::mkstemp(tmpl.data());
+    if (fd < 0) {
+      return arrow::Status::IOError("cannot create a scratch file in ",
+                                    opts.scratchDir, ": ", std::strerror(errno));
+    }
+    ::close(fd);
+    const std::string scratch = tmpl;
+    auto unpacked = decompressZstdFile(dbnPath, scratch);
+    if (!unpacked.ok()) {
+      std::remove(scratch.c_str());
+      return unpacked.status();
+    }
+    st.rep.decompressedBytes = *unpacked;
     auto read = csv::readFile(scratch);
     std::remove(scratch.c_str());
     ARROW_ASSIGN_OR_RAISE(dbnBytes, std::move(read));
@@ -1122,6 +1149,14 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
   st.dataset             = whole.meta.dataset;
 
   if (dbnJob) {
+    // The ticker resolved from the DBN's own symbology must be one the job
+    // asked for; anything else is metadata.json not describing its files.
+    const auto& wanted = job->md.symbols;
+    if (std::find(wanted.begin(), wanted.end(), whole.symbol) == wanted.end()) {
+      return arrow::Status::Invalid(
+          dbnPath, " decodes as symbol `", whole.symbol,
+          "`, which is not in metadata.json's query.symbols. Nothing was written.");
+    }
     // The job's metadata.json and the file's own DBN metadata must describe
     // the same pull. A disagreement is metadata.json not matching its files:
     // COULD-NOT-RUN, the same class as a missing metadata.json.
