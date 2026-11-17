@@ -6,8 +6,11 @@
 //
 // WHAT IS MEASURED: rows/sec from a live ClickHouse into this process's
 // address space, TRANSPORT ONLY. A run is one `SELECT <every column> FROM
-// krn.<table>` — no WHERE, no aggregate, no ORDER BY — and ends when the last
-// column block has been decoded into in-process columns:
+// krn.<table> [WHERE <--where>]` — no aggregate, no ORDER BY — and ends when
+// the last column block has been decoded into in-process columns. `--where`
+// (ENC-1662) is the shim's only read pattern, "this symbol, this time range",
+// so a range is selected by the primary key exactly as a real read would be;
+// it is the SAME text on both arms, and it filters, it never computes:
 //
 //   native  clickhouse-cpp `Client::Select`; a block is a `clickhouse::Block`
 //           whose columns the library has decoded off the socket.
@@ -195,6 +198,8 @@ struct Args {
   std::string hostDataDir;   // host path of the server's /var/lib/clickhouse
   std::string serverDataDir = "/var/lib/clickhouse/";
   std::string csvOut;
+  std::string where;   // ENC-1662: optional predicate, identical on both arms
+  std::string label;   // ENC-1662: names the range in the table and the CSV
 };
 
 std::vector<std::string> splitList(const std::string& s) {
@@ -230,6 +235,9 @@ void usage() {
       "  --host-data-dir <p>    host path bind-mounted at /var/lib/clickhouse;\n"
       "                         REQUIRED for cold (it is what gets evicted)\n"
       "  --csv <file>           write every timed run as a CSV row\n"
+      "  --where <predicate>    appended as WHERE to every query, both arms\n"
+      "                         (e.g. \"symbol = 'NVDA' AND ts_event >= ...\")\n"
+      "  --label <s>            names the range in the table and the CSV\n"
       "exit: 0 ran, 1 a finding, 2 could not run\n";
 }
 
@@ -265,6 +273,8 @@ Args parseArgs(int argc, char** argv) {
     else if (f == "--cold-iters") a.coldIters = parseInt(f, next());
     else if (f == "--host-data-dir") a.hostDataDir = next();
     else if (f == "--csv") a.csvOut = next();
+    else if (f == "--where") a.where = next();
+    else if (f == "--label") a.label = next();
     else if (f == "-h" || f == "--help") { usage(); std::exit(kRan); }
     else throw CouldNotRun("unknown flag " + f + " (see --help)");
   }
@@ -302,8 +312,9 @@ struct Checksum {
 std::string selectSql(const Args& a, const std::string& table, std::size_t block,
                       bool arrow) {
   std::ostringstream q;
-  q << "SELECT * FROM " << a.database << "." << table
-    << " SETTINGS max_block_size=" << block << ", max_threads=1";
+  q << "SELECT * FROM " << a.database << "." << table;
+  if (!a.where.empty()) q << " WHERE " << a.where;
+  q << " SETTINGS max_block_size=" << block << ", max_threads=1";
   if (arrow) q << " FORMAT ArrowStream";
   return q.str();
 }
@@ -591,10 +602,20 @@ double pct(std::vector<double> v, double p) {
 }
 
 struct Cell {
-  std::string table, transport, cache;
+  std::string table, transport, cache, label;
   std::size_t block = 0;
   std::vector<Sample> samples;
+  std::string load;    // /proc/loadavg 1/5/15 at the end of the cell (ENC-1662)
 };
+
+// The machine is shared (D13), so every row carries the load it was taken
+// under: a number without it cannot be told apart from a contended one.
+std::string loadAvg() {
+  std::ifstream f("/proc/loadavg");
+  std::string a, b, c;
+  if (!(f >> a >> b >> c)) return "?";
+  return a + " " + b + " " + c;
+}
 
 std::string fmtRate(double v) {
   std::ostringstream o;
@@ -607,8 +628,8 @@ std::string fmtRate(double v) {
 void printTable(const std::vector<Cell>& cells) {
   std::cout << "\n| table | cache | block | transport | blocks/query | rows/s median"
                " | rows/s p10–p90 | µs/query median | wire bytes/query | wire MB/s median"
-               " | allocs/query | allocs/block |\n"
-               "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+               " | allocs/query | allocs/block | loadavg (end of cell) |\n"
+               "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n";
   for (const auto& c : cells) {
     std::vector<double> rps, us, mbps, allocs;
     for (const auto& s : c.samples) {
@@ -620,13 +641,14 @@ void printTable(const std::vector<Cell>& cells) {
     }
     const auto& s0 = c.samples.front();
     const double medAllocs = pct(allocs, 0.5);
-    std::cout << "| " << c.table << " | " << c.cache << " | " << c.block << " | "
+    std::cout << "| " << c.table << (c.label.empty() ? "" : " " + c.label) << " | "
+              << c.cache << " | " << c.block << " | "
               << c.transport << " | " << s0.blocks << " | " << fmtRate(pct(rps, 0.5))
               << "| " << fmtRate(pct(rps, 0.1)) << "– " << fmtRate(pct(rps, 0.9))
               << "| " << std::fixed << std::setprecision(0) << pct(us, 0.5) << " | "
               << s0.recvBytes << " | " << std::setprecision(1) << pct(mbps, 0.5) << " | "
               << std::setprecision(0) << medAllocs << " | " << std::setprecision(1)
-              << medAllocs / static_cast<double>(s0.blocks) << " |\n";
+              << medAllocs / static_cast<double>(s0.blocks) << " | " << c.load << " |\n";
   }
 }
 
@@ -684,7 +706,11 @@ int run(int argc, char** argv) {
   std::cout << "=== B1: ClickHouse -> krn transport (ENC-1485) ===\n"
             << "native  " << a.host << ":" << a.nativePort << "   http  " << a.host << ":"
             << a.httpPort << "   database " << a.database << "\n"
-            << "this process runs on CPUs: " << cpuList() << "\n";
+            << "this process runs on CPUs: " << cpuList() << "\n"
+            << "where: " << (a.where.empty() ? "(none: whole table)" : a.where)
+            << (a.label.empty() ? "" : "   label: " + a.label) << "\n"
+            << "example SQL: " << selectSql(a, a.tables.front(), a.blocks.front(), false)
+            << "\n";
 
   clickhouse::Client ctl(nativeOptions(a));
   std::cout << "server: " << selectOne(ctl, "SELECT version()") << "\n";
@@ -733,7 +759,7 @@ int run(int argc, char** argv) {
   if (!a.csvOut.empty()) {
     csv.open(a.csvOut);
     if (!csv) throw CouldNotRun("cannot write " + a.csvOut);
-    csv << "table,cache,block,transport,iter,ns,rows,blocks,recv_bytes,allocs\n";
+    csv << "label,table,cache,block,transport,iter,ns,rows,blocks,recv_bytes,allocs\n";
   }
 
   std::vector<Cell> cells;
@@ -744,7 +770,7 @@ int run(int argc, char** argv) {
     for (const auto& cache : a.caches)
       for (const auto block : a.blocks)
         for (const auto& tr : a.transports) {
-          Cell c{t, tr, cache, block, {}};
+          Cell c{t, tr, cache, a.label, block, {}};
           const bool arrow = tr == "http";
           const auto sql = selectSql(a, t, block, arrow);
           auto once = [&]() { return arrow ? runHttp(http, sql) : runNative(nat, sql); };
@@ -769,10 +795,11 @@ int run(int argc, char** argv) {
                         << "/" << r.pages << " pages\n";
             }
             c.samples.push_back(s);
-            if (csv) csv << t << "," << cache << "," << block << "," << tr << "," << i << ","
+            if (csv) csv << a.label << "," << t << "," << cache << "," << block << "," << tr << "," << i << ","
                          << s.ns << "," << s.rows << "," << s.blocks << "," << s.recvBytes
                          << "," << s.allocs << "\n";
           }
+          c.load = loadAvg();
           if (c.samples.empty()) throw CouldNotRun("zero iterations for a cell");
           for (const auto& s : c.samples)
             if (s.rows != c.samples.front().rows || s.rows == 0)
