@@ -88,6 +88,13 @@ struct PullMetadata {
   std::uint64_t limit = 0;  // 0 == no limit
   bool prettyPx = true;     // defaults chosen so an UNREAD field refuses
   bool prettyTs = true;
+  // The delivery shape (ENC-1640). Read for the DBN-job mode, which refuses
+  // anything but `encoding=dbn`, `compression=zstd`, `split_duration=day`;
+  // the CSV path does not consult them. Empty when absent or JSON null.
+  std::string encoding;       // "csv" | "dbn" | ...
+  std::string compression;    // "zstd" | "" (null)
+  std::string splitDuration;  // "day" | "" (null)
+  bool mapSymbols = false;
 };
 
 arrow::Result<PullMetadata> readPullMetadata(const std::string& path);
