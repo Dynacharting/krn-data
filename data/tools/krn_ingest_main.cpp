@@ -263,10 +263,16 @@ void printKind(const ingest::KindReport& k) {
   std::cout << "  canonical rows : " << k.canonicalRows << "\n";
   if (k.snapshotExcluded != 0 || k.actionNone != 0) {
     std::cout << "  not rows       : " << k.snapshotExcluded
-              << " F_SNAPSHOT record(s) excluded (see the snapshot ruling), "
-              << k.actionNone << " mbo action N\n";
+              << " F_SNAPSHOT record(s), not krn." << k.kind
+              << " rows (see the snapshot ruling), " << k.actionNone
+              << " mbo action N\n";
   }
   std::cout << "  rows inserted  : " << k.rowsInserted << "\n";
+  if (k.snapshotExcluded != 0) {
+    std::cout << "  snapshot       : " << k.snapshotRowsInserted
+              << " row(s) inserted into krn.book_snapshots, as of "
+              << ingest::formatNs(k.snapshotAsOfNs) << "\n";
+  }
   std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
             << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
                "written as holes; "
