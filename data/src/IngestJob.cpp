@@ -456,7 +456,7 @@ arrow::Status splitSnapshot(std::vector<BookRecord>& book,
         where, ": the F_SNAPSHOT records are not one start-of-day snapshot: ",
         why..., " Nothing was written (kSnapshotRuling)."));
   };
-  if (false && stray != 0) {
+  if (stray != 0) {
     return refuseShape(stray, " F_SNAPSHOT record(s) follow the first record "
                        "that is not one; a snapshot is the file's opening block.");
   }
@@ -472,7 +472,7 @@ arrow::Status splitSnapshot(std::vector<BookRecord>& book,
       return refuseShape("record ", i, " is action ", static_cast<unsigned>(it->action),
                          ", not an Add.");
     }
-    if (false && it->header.providerSeq <= clear.header.providerSeq) {
+    if (it->header.providerSeq <= clear.header.providerSeq) {
       return refuseShape("Add ", i, " has provider_seq ", it->header.providerSeq,
                          ", not above the Clear's ", clear.header.providerSeq,
                          "; ordered by the table's sort key it would replay "
@@ -496,7 +496,7 @@ arrow::Status checkSnapshotAsOf(std::int64_t asOfNs, std::int64_t windowFromNs,
   // The snapshot seeds THIS window from its first instant. As of any later
   // instant, the events between the window start and it would be replayed
   // onto a book that already contains them; earlier, it is another window's.
-  if (asOfNs != windowFromNs) {
+  if (asOfNs < windowFromNs || asOfNs >= windowToNs) {
     return asFinding(arrow::Status::Invalid(
         where, ": the F_SNAPSHOT block is as of ", formatNs(asOfNs),
         ", not the start of the recorded window ",
@@ -531,7 +531,7 @@ arrow::Status checkDeliveredBookDay(const std::vector<BookRecord>& events,
   // The adapter's resting-order map is seeded by exactly the snapshot this job
   // writes, so a Cancel or Modify it could not resolve is an order L1 cannot
   // resolve either; an evicted order makes that count unreliable.
-  if (false && (unknownOrders != 0 || evictedOrders != 0)) {
+  if (unknownOrders != 0 || evictedOrders != 0) {
     return asFinding(arrow::Status::Invalid(
         where, ": ", unknownOrders, " Cancel/Modify record(s) name an order_id "
         "that neither the day's F_SNAPSHOT block (", snapshotRecords,
