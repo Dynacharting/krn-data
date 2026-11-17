@@ -35,12 +35,17 @@ sample.
    - Trades: step 5 over step 3 is +0.0% to +1.2%.
    - mbo, wide graph: +0.9% to +1.6%.
    - mbo, default graph: −1.1% to +0.5%, i.e. no gain.
+   - Only the wide-graph gain is consistent, at about 1.0–1.1%. Even that is only about
+     1.3× the row-to-row floor, with no A/A control.
+   - The default-graph gain is not corroborated across schemas.
    - The gain does not grow with volume (§6).
 5. **New on real volume: at one pool thread, step 3 (inline DAG) is *slower* than
    step 2.**
    - On the default graph it runs at 0.87–0.90× on both schemas. On the MSFT sample it
      was 1.36× (trades) and 1.64× (mbo) faster.
    - At 16 threads its lead shrinks from 1.92× to about 1.3× (§7).
+   - The cause is unprofiled. Engine history cost and the harness's own capture buffers
+     are both candidates.
 
 ## 2. The data
 
@@ -114,10 +119,17 @@ one.**
   prefix, and no re-encoded file.
 - A record-count slice inside the harness could not have helped either: the adapter
   refused the whole decode at record 0.
-- After the merge, the 10-27 trades decode and the reference are byte-identical to the
-  pre-merge run: the same bytes, FNV, row count and delivery counts
-  (`probe/trades-1027-postmerge-1it.txt`). So the trades rows taken before the merge
-  stand.
+- After the merge, the 10-27 trades run matches the pre-merge run on its input and its
+  output counts (`probe/trades-1027-postmerge-1it.txt`):
+  - the same input bytes (size and FNV-1a-32);
+  - the same decoded row count;
+  - the same per-terminal delivery and store-entry counts.
+- The output *bytes* were not hashed across the two binaries, so this is not a
+  byte-identity claim.
+- `32a08f5`'s decode change touches only symbol and day resolution: which symbology
+  window a record is looked up in. Trades rows carry the same `ts_recv` and `ts_event`
+  date, so the same ticker resolves either way. On that basis the trades rows taken
+  before the merge stand.
 
 **Memory.**
 - The harness loads the whole file and decodes it into memory before timing.
@@ -128,10 +140,11 @@ one.**
 **A behavioural difference the sample could not show.**
 - The Dispatcher keeps a per-(symbol, field) history capped at `taHistoryMax = 1000`,
   and recomputes the builtins over it on every tick.
-- With 1000 rows the MSFT window never rolled (it averaged about 500 entries). On NVDA
-  it is full, at 1000, from the 1000th print onward.
-- This is the likely reason per-print cost is higher on NVDA (§7). That is reasoned from
-  the code; it was not measured in isolation.
+- The MSFT window never rolled. Over its 1000 trades rows it averaged about 500
+  entries; over its 248 mbo prints, about 124. On NVDA it is full, at 1000, from the
+  1000th print onward.
+- This is one candidate reason per-print cost is higher on NVDA. §7 names a second, the
+  harness's own capture buffers. Neither has been measured in isolation.
 
 ## 4. Final timing tables
 
@@ -219,6 +232,9 @@ mbo reference deliveries:
     held for that one row.
   - Inside the lock, the row started only if the 1-min load was < 2.5 and the 5-min
     load was < 4. Otherwise it released the lock and retried.
+  - **The gate is checked at the start of a row only.** Nothing stops another job from
+    loading the machine mid-row. The *load after* column is the only record of what
+    happened during the row.
 - Two rows deserve a note, though neither was taken under load in the gate's sense:
   - **Trades 10-27 default/hw** started with a 15-minute average of 6.46, left over from
     the busy period. Its 1- and 5-min values were inside the gate, and its p10–p90 is as
@@ -265,6 +281,13 @@ exit 1, print `MISMATCH`, and print `falsify: applied`.
   falsifications, all red. `scripts/falsify_day.sh` re-ran all 10, using the same command
   and the same verdict rule as `run_b2.sh`, under the lock.
 - The vendor mbo falsifications used the same script with `SCHEMA=mbo`.
+- **What evidence survives differs by run.**
+  - The 20 trades falsifications for 10-27 and 10-29 survive only as `run_b2.sh`'s
+    summary rows in `run1-20261027.txt` and `run1-20261029.txt`: mutation, what was
+    applied, exit code, verdict. `run_b2.sh` writes each falsification's own output to a
+    `mktemp` directory and deletes it, so no per-mutation output was kept.
+  - The trades 11-05 runs and all 30 mbo runs went through `falsify_day.sh`. Each of
+    those has its full output kept as `falsify[-mbo]-<day>-<graph>-<kind>.txt`.
 - The harness's "20" means 5 mutations × 2 graphs × 2 schemas, per data-file pair. Each
   vendor day gets 10 per schema, so 20 per day.
 
@@ -282,25 +305,53 @@ default graph it is worth nothing. The gain does not grow with volume.**
 | MSFT control, mbo, same machine | +0.8% to +6.5% |
 | ENC-1627 (krn PR #115), sample, load ≈ 28 | −0.5% to +7% |
 
-**How solid the gain is.**
-- On trades, step 5's median is above step 3's in 12 of 12 rows. In 6 of the 12, step 5's
-  p10 is above step 3's p90; the others overlap slightly.
-- On mbo with the wide graph, step 5's p10 is above step 3's p90 in 6 of 6 rows.
-- On mbo with the default graph, the two ranges overlap in every row.
+**How solid the gain is.** It is weaker than the medians alone suggest.
 
-**Why it cannot grow.**
+- **Wide graph.** This is the only gain with any support.
+  - Step 5's median is above step 3's in all 12 wide rows.
+  - On mbo, step 5's p10 is above step 3's p90 in 6 of 6 rows.
+  - The size of that gain is about 1.0–1.1%.
+- **Default graph.** The gain is **not corroborated**.
+  - The two schemas disagree. Trades default reads about +0.63% (mean of 6 rows).
+    mbo default should read about +0.5% after diluting the same per-print saving over
+    fieldless rows. It reads −0.26% instead.
+  - That puts a floor of roughly 0.8–0.9 points between rows that should agree. The wide
+    gain is only about 1.3× that floor.
+  - Trades 10-27 default/hw reads +0.05%, which is nothing.
+- **Limits of the measurement itself.**
+  - The mbo rows and the trades 11-05 rows have 3 measured iterations. Their p10/p90 are
+    therefore effectively min/max, not a distribution.
+  - Steps run in a fixed 1, 2, 3, 5 order in every iteration.
+  - There is no A/A control, such as step 3 run twice, so a systematic position effect
+    of the order of 1% cannot be excluded.
+
+**What elision skips and what it costs**, per krn `75a5616`:
+
+- **Default graph.** Elision skips one raw `setBatch` of {price, size} per print: 2 store
+  entries under 1 lock acquisition. The `mean` and `stddev` builtin writes are declared
+  pull reads, so they are kept (`Dispatcher.cpp:465–470`).
+- **Wide graph.** It skips that batch plus 7 unread builtins × 2 fields: about 16 store
+  entries and 15 lock acquisitions per print.
+- **What it adds.** With elision on, *every* `ingest` call runs
+  `_store->sealReads()` and `_store->sealedReadFieldsFor(symbol)`, an
+  `unordered_map<string>` lookup (`Dispatcher.cpp:169–173`, `AtomicStore.cpp:240–253`).
+  Fieldless mbo records pay this too, and they save nothing.
+  - On mbo default that is a plausible reason for a reading of zero or below: 94–97% of
+    the records are fieldless, and the per-print saving is only 2 entries.
+  - This is reasoned from the code, not profiled.
+
+**Why it cannot grow with volume.**
 - The store is a last-value map. After a whole day it holds 4 entries (default) or 11
   (wide).
-- Elision skips 2 (default) or 9 (wide) map writes per field tick. Against that, a print
-  costs about 12 µs (default) or about 55 µs (wide) in total.
-- The saving is a fixed per-tick cost, so 6× or 30× more rows cannot change the ratio.
-- On the default graph the two skipped writes are within noise. The wide graph, with 9
-  writes skipped, is where a gain shows.
+- Both the saving and the added lookup are fixed per record. Against them, a print costs
+  about 12 µs (default) or about 55 µs (wide) in total.
+- So 6× or 30× more rows cannot change the ratio.
 - The MSFT mbo rows reached +6.5%. That was a 1000-row sample whose history window never
-  filled, and it does not reproduce at volume.
+  filled (about 124 entries on average), and it does not reproduce at volume.
 
-**Input to keep/revert.** B2 at real volume shows elision at about +1% on graphs with many
-unread builtins, and at zero on the default graph. That is weaker than the sample
+**Input to keep/revert.** At real volume, B2 shows elision at about +1% on a graph with
+many unread builtins. That is about 1.3× the row-to-row floor, and it has no A/A control.
+On the default graph it shows nothing that can be told apart from zero. That is weaker than the sample
 suggested. Whether ~1% pays for the read-set seal, and for refusing a new key at build
 time after the seal, is Nick's call.
 
@@ -363,13 +414,35 @@ is the clean same-machine, same-pin baseline.
 
 On trades, absolute step-3 throughput falls from about 147k to about 84k rows/s.
 
-**Hypothesis for step 3, not measured.**
-- With the history window full (§3), the ingress-side work per print grows to dominate:
-  the history copy plus the builtin reductions over 1000 values.
-- In step 2 the DAG runs on the pool thread, overlapping that ingress work.
-- Step 3 (`inlineDagDrive`) puts the DAG on the ingress thread, so the two serialise.
-- If that is right, the sample-measured step-3 gain is partly an artefact of a history
-  that never filled. It is worth one profile before step 3's gain is quoted on real data.
+**Two hypotheses for step 3. Neither is measured, and a profile must tell them
+apart.**
+
+1. **History cost.**
+   - With the history window full (§3), the ingress-side work per print grows to
+     dominate: the history copy plus the builtin reductions over 1000 values.
+   - In step 2 the DAG runs on the pool thread, overlapping that ingress work.
+   - Step 3 (`inlineDagDrive`) puts the DAG on the ingress thread, so the two serialise.
+2. **The harness's own capture cost.**
+   - `CaptureSink` appends every delivery to growing `std::string` and `std::vector`
+     buffers: millions of deliveries per iteration on NVDA, against about 2,000–22,000 on
+     the sample.
+   - Their reallocation and first-touch page faults land on whichever thread delivers.
+     In step 3 that is the ingress thread, inside the serial path. In step 2 it is the
+     pool, overlapped with ingress.
+   - Supporting evidence: the 1-iteration trades 10-27 probe used 6.19 s sys against
+     13.35 s user, with 178,389 minor page faults (`probe/trades-1027-default-1it.err`).
+     That is the whole process, decode and all four steps included, so it does not
+     attribute the cost to step 3.
+   - If this is the cause, the step-3 slowdown at one thread is partly a harness
+     artefact, not an engine property.
+
+The profile should separate the two:
+- `perf` on the ingress thread, step 3 against step 2;
+- or a run with `CaptureSink` pre-reserved;
+- or a run with `taHistoryMax` lowered.
+
+Until then, quote neither step 3's sample gain nor its real-volume loss as an engine
+property.
 
 ## 8. Commands
 

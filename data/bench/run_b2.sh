@@ -15,10 +15,10 @@
 #   KRN_B2_ITERATIONS  measured iterations per step (default 200)
 #   KRN_B2_WARMUP      discarded warm-up iterations per step (default 5)
 #   KRN_B2_SCHEMAS     which data points to run, in order (default "trades mbo").
-#                      ENC-1641: the vendor NVDA mbo days are refused by the
-#                      adapter's symbology check, so a vendor run is trades-only
-#                      and says so; the falsification count follows (5 per
-#                      schema per graph, 20 for the default pair).
+#                      ENC-1641: e.g. KRN_B2_SCHEMAS=trades to run one schema of
+#                      a vendor day on its own. The falsification count follows
+#                      (5 per schema per graph, 20 for the default pair). Vendor
+#                      mbo days decode since ENC-1640's symbology fix (32a08f5).
 #   KRN_B2_FALSIFY_ITERATIONS  measured iterations per falsification run
 #                      (default 3). Any value >= 1 is a real comparison: the
 #                      reference is step 1's first iteration and the mutated
