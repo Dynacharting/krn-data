@@ -273,6 +273,11 @@ void printKind(const ingest::KindReport& k) {
               << " row(s) inserted into krn.book_snapshots, as of "
               << ingest::formatNs(k.snapshotAsOfNs) << "\n";
   }
+  if (k.kind == "book_events") {
+    std::cout << "  unknown orders : " << k.unknownOrders
+              << " Cancel/Modify record(s) naming an order the snapshot and "
+                 "the day's Adds did not introduce\n";
+  }
   std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
             << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
                "written as holes; "

@@ -218,6 +218,9 @@ struct KindReport {
   std::size_t   snapshotRowsInserted = 0;
   // The instant the snapshot is as of (the records' ts_recv); 0 if none.
   std::int64_t  snapshotAsOfNs       = 0;
+  // Cancel/Modify records naming an order the adapter's map (seeded by the
+  // snapshot) did not hold. A delivered mbo day is refused unless 0.
+  std::uint64_t unknownOrders        = 0;
   std::size_t   actionNone       = 0;  // mbo action N, decoded and row-less
 };
 

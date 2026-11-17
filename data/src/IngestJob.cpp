@@ -110,9 +110,12 @@ const char* const kSnapshotRuling =
     "replaces them and nothing else. The snapshot is recorded complete as its "
     "own `book_snapshots` window, written state=1 after its rows and BEFORE the "
     "day's `book_events` window, so a book_events day reads complete only when "
-    "its seed is in L1 too (D11). A delivered mbo day with no snapshot, or one "
-    "that is not a single opening block (a Clear, then Adds, one as-of instant, "
-    "the Clear's provider_seq below every Add's), is refused. Every decoded "
+    "its seed is in L1 too (D11). A delivered mbo day is refused if a Cancel "
+    "or Modify names an order that neither its snapshot nor its own Adds "
+    "introduced (a day with no snapshot, such as the NVDA job's Mondays, "
+    "passes only so), and so is a snapshot that is not one opening block (a "
+    "Clear, then Adds, one as-of instant, the Clear's provider_seq below every "
+    "Add's). Every decoded "
     "record is accounted for as a row, a snapshot row, an mbo action N or a "
     "skipped rtype, or the day is refused.";
 
@@ -1145,14 +1148,22 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
             dbnPath, " decoded only F_SNAPSHOT book records; there is no event "
             "in the window to record."));
       }
-      if (dbnJob && st.snapshot.empty()) {
-        // A delivered mbo day opens with the vendor's snapshot. Without one the
-        // day's overnight orders cannot be seeded from L1, and a book_events
-        // window recorded complete would not be replayable (D11).
+      // D11 FOR A DELIVERED DAY: recorded complete only if its book rebuilds
+      // from L1 alone. The adapter's resting-order map is seeded by exactly
+      // the snapshot written here, so a Cancel or Modify it could not resolve
+      // is an order L1 cannot resolve either. A day with no snapshot (the
+      // Mondays of the NVDA job open with an unflagged Clear) passes only if
+      // its own events are closed.
+      st.rep.unknownOrders = whole.stats.unknownOrder;
+      if (dbnJob && (whole.stats.unknownOrder != 0 || whole.stats.evictedOrders != 0)) {
         return asFinding(arrow::Status::Invalid(
-            dbnPath, " has no F_SNAPSHOT block, so the book its events apply to "
-            "cannot be seeded from L1; the day is not recorded complete "
-            "(kSnapshotRuling)."));
+            dbnPath, ": ", whole.stats.unknownOrder, " Cancel/Modify record(s) "
+            "name an order_id that neither the day's F_SNAPSHOT block (",
+            st.snapshot.size(), " record(s)) nor an earlier Add introduced, and ",
+            whole.stats.evictedOrders, " tracked order(s) were evicted. A book "
+            "seeded from krn.book_snapshots and replayed through this day's "
+            "book_events would not be the venue's book, so the day is not "
+            "recorded complete (D11, kSnapshotRuling)."));
       }
     }
   }
