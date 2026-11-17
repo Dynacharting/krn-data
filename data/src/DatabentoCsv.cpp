@@ -175,7 +175,10 @@ struct Common {
         static_cast<std::int64_t>(tsEvent) + tsInDelta) {
       ++out.tsRecvMatchesDelta;
     }
-    const std::uint32_t day = yyyymmddUtc(tsEvent);
+    // The mapping's days come from the SAME timestamp the adapter resolves
+    // on (dbn::indexTs, ENC-1640). Harvesting ts_event days here while the
+    // adapter keys on ts_recv refused a record received after midnight.
+    const std::uint32_t day = yyyymmddUtc(dbn::indexTs(tsEvent, tsRecv));
     auto& bySym = seen[instrumentId];
     auto it = bySym.find(std::string(symbol));
     if (it == bySym.end()) {

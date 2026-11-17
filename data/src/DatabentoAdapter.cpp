@@ -686,7 +686,7 @@ arrow::Result<RecordHeader> DatabentoAdapter::makeHeader(const dbn::RecordHeader
   // the 2026-10-27 NVDA file as "no symbology window covering 20261026".
   // ts_event stays the only time an operator keys off (SPEC D9); this is a
   // lookup of a label. An undefined ts_recv falls back to ts_event.
-  const std::int64_t indexTs = h.tsRecvNs != 0 ? h.tsRecvNs : h.tsEventNs;
+  const auto indexTs = static_cast<std::int64_t>(dbn::indexTs(hd.tsEvent, tsRecv));
   ARROW_ASSIGN_OR_RAISE(h.symbolId, resolveSymbol(hd.instrumentId, indexTs));
   return h;
 }
