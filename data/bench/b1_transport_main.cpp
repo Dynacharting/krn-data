@@ -434,9 +434,23 @@ class ArrowHttp {
       throw CouldNotRun("http " + std::to_string(status) + ": " + errBody.substr(0, 400));
   }
 
+  // Called OUTSIDE the timed window. Besides a `Connection: close` reply, the
+  // server drops a keep-alive connection that sat idle past its
+  // keep_alive_timeout (10 s on 25.3) — which a long native cell does to the
+  // idle HTTP connection (ENC-1662, first seen on the NVDA day: "end of
+  // stream" on the next request). A non-blocking peek that reads EOF (0) or an
+  // error other than EAGAIN means the peer is gone; reconnect here, untimed,
+  // rather than let the timed request discover it.
   void ensureConnected() {
-    if (!keepAlive_) { stream_.close(); buf_.clear(); connect(); }
+    bool dead = !keepAlive_;
+    if (!dead) {
+      char b;
+      const ssize_t r = ::recv(stream_.socket().native_handle(), &b, 1, MSG_PEEK | MSG_DONTWAIT);
+      dead = r == 0 || (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK);
+    }
+    if (dead) { ++reconnects_; stream_.close(); buf_.clear(); connect(); }
   }
+  std::uint64_t reconnects() const { return reconnects_; }
 
  private:
   void connect() {
@@ -452,6 +466,7 @@ class ArrowHttp {
   beast::flat_buffer buf_;
   std::string target_;
   bool keepAlive_ = true;
+  std::uint64_t reconnects_ = 0;
 };
 
 Sample runHttp(ArrowHttp& h, const std::string& sql) {
@@ -813,6 +828,8 @@ int run(int argc, char** argv) {
   printPooled(cells);
   std::cout << "\ncold runs whose eviction was read back as 0 resident pages: "
             << coldChecked << "\n";
+  std::cout << "http reconnects outside the timed window (idle keep-alive closed by the server): "
+            << http.reconnects() << "\n";
   return kRan;
 }
 
