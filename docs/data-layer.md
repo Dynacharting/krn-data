@@ -583,6 +583,31 @@ raw book **state**, not an aggregate — `OrderBookManager` is the single implem
 applying deltas either way. Cadence: session open plus a fixed event-time interval, tuned
 against B3. (Formerly Q9, now settled in principle; cadence is a tuning parameter.)
 
+**What is written today is the vendor's start-of-day snapshot, one row per record
+(ENC-1663).** Every delivered XNAS.ITCH mbo day file opens with a Clear and one Add per order
+resting at midnight, flagged `F_SNAPSHOT`: 4116 records on NVDA 2026-10-27 (1 Clear, 4115
+Adds), 10681 on 2026-11-07. The table was a nested array of aggregated levels, which nothing
+wrote and which cannot seed an MBO book: every Cancel and Modify names an `order_id`, and a
+level total holds none. It is now one row per record, with the `book_events` columns a
+Clear or an Add needs plus `order_ts`, the order's own `ts_event`. The row's `ts_event` is
+the instant the snapshot is **as of** (the records' `ts_recv`, the day's midnight, which is
+the recorded window's start), so the rows sit in the partition of the day they seed: a
+re-ingest of that day drops and reloads them (§8.6) and touches no other day. Seeding is
+replaying these rows in `(ts_event, provider_seq)` order, Clear first; the job refuses a
+snapshot whose Clear does not sort first, or that is not one opening block at one instant.
+
+Measured from L1 alone: seeded from `book_snapshots`, NVDA 2026-10-27's 7,010,872
+`book_events` rows meet **0** unknown `order_id`s; from an empty book they meet **4115**
+(Deletes of the overnight orders). 2026-11-07: 0 seeded, 10706 unseeded.
+
+Completeness (§8.8, D11): the snapshot is recorded as its own `kind = 'book_snapshots'`
+window over the same `[from_ts, to_ts)`, written `state = 1` after its rows and before the
+day's `book_events` window, and both kinds are invalidated together when a day is dropped.
+On a delivered day the job also refuses to record the window if any Cancel or Modify names an
+order that neither the snapshot nor the day's own Adds introduced. The NVDA job's Mondays
+carry no snapshot (they open with an unflagged Clear); they pass that check on their own and
+get no `book_snapshots` window. The cadence snapshot above is still not built.
+
 ### 8.6 Engine and re-ingest — plain `MergeTree`, drop-partition reload
 
 ```sql
@@ -637,7 +662,9 @@ What the job does, in order (`data/src/IngestJob.cpp`, pass 2):
    (`trades` first), so a refusal during `book_events` comes after `trades` has already been
    dropped and reloaded.
 4. It writes `state = 0` (in flight) for its own recorded window.
-5. `ALTER TABLE … DROP PARTITION <day>` for each day, on that kind's table only.
+5. `ALTER TABLE … DROP PARTITION <day>` for each day, on that kind's table only, except that
+   an mbo load drops the same days of `book_snapshots` too, and steps 3, 4 and 6 cover that
+   kind's windows as well (§8.5).
 6. It inserts the rows. On an insert error it writes `state = 2` (failed) and returns. Then
    it writes `krn.symbology` (§8.9), then `state = 1` with `rows_inserted` set to the rows it
    sent. A failed symbology insert returns with the window still at `state = 0`, which reads
