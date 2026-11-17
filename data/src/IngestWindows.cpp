@@ -128,4 +128,26 @@ Completeness isComplete(const std::vector<IngestWindowRow>& rows,
   return v;
 }
 
+CountRefutation refuteByCount(const std::string& kind, std::uint64_t claimed,
+                              std::int64_t actual) {
+  CountRefutation r;
+  if (actual < 0) {
+    r.refuted = true;
+    r.reason  = "a negative row count is not a count";
+    return r;
+  }
+  const auto n = static_cast<std::uint64_t>(actual);
+  if (claimed > 0 && n == 0) {
+    r.refuted = true;
+    r.reason  = "claims " + std::to_string(claimed) + " inserted row(s) and holds ZERO";
+  } else if (kind == "book_snapshots" && n != claimed) {
+    r.refuted = true;
+    r.reason  = "claims " + std::to_string(claimed) + " snapshot row(s) and holds " +
+               std::to_string(n) + "; a snapshot window holds exactly its own rows";
+  }
+  return r;
+}
+
+bool kindMayBeUnrecorded(const std::string& kind) { return kind == "book_snapshots"; }
+
 }  // namespace krn::data
