@@ -1725,6 +1725,27 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
 
 }  // namespace
 
+arrow::Status loadBookDay(const ch::Client& client, const BookDayLoad& day,
+                          Report& rep) {
+  Staged st;
+  st.rep.kind           = "book_events";
+  st.rep.dbnSchema      = "mbo";
+  st.rep.symbol         = day.symbol;
+  st.rep.venue          = day.venue;
+  st.rep.jobId          = day.jobId;
+  st.rep.recordedFromNs = day.fromNs;
+  st.rep.recordedToNs   = day.toNs;
+  st.rep.snapshotAsOfNs = day.snapshotAsOfNs;
+  st.rep.snapshotExcluded = day.snapshot.size();
+  st.table              = "book_events";
+  st.sessionId          = day.sessionId;
+  st.decoded.symbol     = day.symbol;
+  st.decoded.venue      = day.venue;
+  st.decoded.book       = day.events;
+  st.snapshot           = day.snapshot;
+  return loadOne(client, st, rep);
+}
+
 arrow::Result<Report> run(const Options& opts) {
   Report rep;
   rep.sessionIdRuling = kSessionIdRuling;
