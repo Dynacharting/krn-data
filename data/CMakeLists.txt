@@ -201,8 +201,15 @@ if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
   # skip reads exactly like a pass (ENC-1095).
   set(KRN_DATA_SAMPLE_DIR "$ENV{HOME}/market-data/databento/XNAS.ITCH/MSFT/20220610"
     CACHE PATH "directory holding the retained T5 sample DBN files (ENC-1506)")
+  # ENC-1640: Nick's delivered NVDA trades DBN job, read by IngestDbnJobTest.
+  # Licensed vendor data outside every working tree, like the sample above;
+  # a missing job FAILS the case, never skips it.
+  set(KRN_DATA_NVDA_TRADES_JOB
+    "$ENV{HOME}/market-data/databento/XNAS.ITCH/NVDA/trades-dbn-XNAS-20261117-R7EH4L6T8P"
+    CACHE PATH "a delivered vendor DBN trades job directory (ENC-1640)")
   target_compile_definitions(krn_data_tests PRIVATE
     KRN_DATA_SAMPLE_DIR="${KRN_DATA_SAMPLE_DIR}"
+    KRN_DATA_NVDA_TRADES_JOB="${KRN_DATA_NVDA_TRADES_JOB}"
     KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
     KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
   krn_apply_warnings(krn_data_tests)

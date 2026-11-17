@@ -362,8 +362,14 @@ arrow::Result<PullMetadata> readPullMetadata(const std::string& path) {
       if (s.IsString()) md.symbols.emplace_back(s.GetString());
     }
   }
+  str(q, "encoding", md.encoding);
+  str(q, "compression", md.compression);
   if (doc.HasMember("customizations") && doc["customizations"].IsObject()) {
     const auto& c = doc["customizations"];
+    str(c, "split_duration", md.splitDuration);
+    if (c.HasMember("map_symbols") && c["map_symbols"].IsBool()) {
+      md.mapSymbols = c["map_symbols"].GetBool();
+    }
     if (c.HasMember("pretty_px") && c["pretty_px"].IsBool()) {
       md.prettyPx = c["pretty_px"].GetBool();
     }

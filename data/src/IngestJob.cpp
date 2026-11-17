@@ -8,10 +8,15 @@
 #include "krn/data/Gaps.hpp"
 #include "krn/engine/SymbolTable.hpp"
 
+#include <arrow/util/compression.h>
+#include <rapidjson/document.h>
+
 #include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
 #include <set>
 #include <span>
 #include <sstream>
@@ -82,6 +87,25 @@ const char* const kGapsNote =
     "either: the job refuses to record such a window complete. A real detector "
     "needs an unfiltered pull measured contiguous, a design decision rather "
     "than code.";
+
+const char* const kSnapshotRuling =
+    "THE VENDOR'S START-OF-DAY MBO SNAPSHOT IS NOT WRITTEN TO krn.book_events "
+    "(ENC-1640).\n"
+    "  Every delivered XNAS.ITCH mbo day file opens with a Clear and one Add per "
+    "order resting at midnight, all flagged F_SNAPSHOT (and F_BAD_TS_RECV: "
+    "ts_recv is the day's midnight). Their ts_event is each order's ORIGINAL "
+    "time, as early as the previous day's 08:00 UTC: 4116 records on NVDA "
+    "2026-10-27. Written as events they would land in the PREVIOUS day's "
+    "partition, so the load would DROP that partition (another window's rows), "
+    "and a replay of that day ordered by ts_event would meet a Clear and a "
+    "duplicate Add of every overnight order in the middle of it.\n"
+    "  They are state, not events, and state is krn.book_snapshots' job "
+    "(docs 8.5), which this job does not write. So they are decoded (the "
+    "adapter's resting-order map is built from them, which is what lets the "
+    "day's Cancels resolve), counted, reported and excluded from the insert. "
+    "Every decoded record is accounted for as a row, a snapshot record, an mbo "
+    "action N or a skipped rtype, or the day is refused. The day's rows carry "
+    "the epoch the snapshot's Clear began; that Clear row is not in L1.";
 
 namespace {
 
@@ -267,13 +291,6 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
      << b.orderId << '\t' << b.priority << '\t' << b.depth << '\t' << b.epoch
      << '\t' << b.flags << '\n';
   return os.str();
-}
-
-std::string renderRows(const Decoded& d) {
-  std::string out;
-  for (const auto& t : d.ticks) out += renderTradeRow(t, d.symbol, d.venue);
-  for (const auto& b : d.book) out += renderBookRow(b, d.symbol, d.venue);
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,181 +481,445 @@ arrow::Result<std::int64_t> rowCount(const ch::Client& client,
 }
 
 // ===========================================================================
+// A delivered vendor DBN job (ENC-1640)
+// ===========================================================================
+
+std::pair<std::int64_t, std::int64_t> dayWindow(std::uint32_t yyyymmdd,
+                                                std::uint64_t queryStart,
+                                                std::uint64_t queryEnd) {
+  const std::uint64_t dayFrom = csv::midnightUtcNs(yyyymmdd);
+  const std::uint64_t dayTo   = dayFrom + 86400000000000ULL;
+  const std::uint64_t from    = std::max(dayFrom, queryStart);
+  const std::uint64_t to      = std::min(dayTo, queryEnd);
+  return {static_cast<std::int64_t>(from), static_cast<std::int64_t>(to)};
+}
+
+arrow::Result<std::uint64_t> decompressZstdFile(const std::string& inPath,
+                                                const std::string& outPath) {
+  if (!arrow::util::Codec::IsAvailable(arrow::Compression::ZSTD)) {
+    return arrow::Status::NotImplemented(
+        "this build's Arrow has no ZSTD codec (KRN_DATA_ARROW_IPC_CODECS=OFF?), "
+        "so a delivered .dbn.zst cannot be decompressed");
+  }
+  ARROW_ASSIGN_OR_RAISE(auto codec,
+                        arrow::util::Codec::Create(arrow::Compression::ZSTD));
+  ARROW_ASSIGN_OR_RAISE(auto dec, codec->MakeDecompressor());
+
+  std::FILE* in = std::fopen(inPath.c_str(), "rb");
+  if (in == nullptr) return arrow::Status::IOError("cannot open ", inPath);
+  std::FILE* out = std::fopen(outPath.c_str(), "wb");
+  if (out == nullptr) {
+    std::fclose(in);
+    return arrow::Status::IOError("cannot create the scratch file ", outPath);
+  }
+  const auto fail = [&](arrow::Status st) {
+    std::fclose(in);
+    std::fclose(out);
+    std::remove(outPath.c_str());
+    return st;
+  };
+
+  std::vector<std::uint8_t> ibuf(1u << 20);
+  std::vector<std::uint8_t> obuf(1u << 22);
+  std::uint64_t written = 0;
+  bool sawInput = false;
+  for (;;) {
+    const std::size_t n = std::fread(ibuf.data(), 1, ibuf.size(), in);
+    if (n == 0) break;
+    sawInput = true;
+    std::size_t pos = 0;
+    // Drain this chunk completely; a frame end inside it is followed by the
+    // next frame, which ZSTD_decompressStream begins on its own.
+    while (pos < n || !dec->IsFinished()) {
+      auto r = dec->Decompress(static_cast<std::int64_t>(n - pos), ibuf.data() + pos,
+                               static_cast<std::int64_t>(obuf.size()), obuf.data());
+      if (!r.ok()) return fail(r.status());
+      pos += static_cast<std::size_t>(r->bytes_read);
+      if (r->bytes_written > 0) {
+        if (std::fwrite(obuf.data(), 1, static_cast<std::size_t>(r->bytes_written),
+                        out) != static_cast<std::size_t>(r->bytes_written)) {
+          return fail(arrow::Status::IOError("short write to ", outPath));
+        }
+        written += static_cast<std::uint64_t>(r->bytes_written);
+      }
+      if (r->bytes_read == 0 && r->bytes_written == 0) break;  // needs more input
+    }
+  }
+  if (std::ferror(in) != 0) return fail(arrow::Status::IOError("read error on ", inPath));
+  if (!sawInput || !dec->IsFinished()) {
+    return fail(arrow::Status::IOError(
+        inPath, " ends inside a zstd frame (", written,
+        " bytes decompressed). A truncated delivered file is not a day's data; "
+        "re-download it and check manifest.json's sha256."));
+  }
+  std::fclose(in);
+  if (std::fclose(out) != 0) {
+    std::remove(outPath.c_str());
+    return arrow::Status::IOError("cannot close ", outPath);
+  }
+  return written;
+}
+
+namespace {
+
+arrow::Result<rapidjson::Document> readJson(const std::string& path) {
+  ARROW_ASSIGN_OR_RAISE(const auto bytes, csv::readFile(path));
+  const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  rapidjson::Document doc;
+  doc.Parse(text.c_str());
+  if (doc.HasParseError()) {
+    return arrow::Status::Invalid(path, " is not valid JSON");
+  }
+  return doc;
+}
+
+}  // namespace
+
+arrow::Result<DbnJobPlan> planDbnJob(const std::string& dirIn,
+                                     const std::vector<std::uint32_t>& onlyDays) {
+  const std::string dir = expandTilde(dirIn);
+  DbnJobPlan plan;
+  // A missing metadata.json is an IOError from readPullMetadata: untagged, so
+  // exit 2. DBN carries no job_id and the query window is only here.
+  ARROW_ASSIGN_OR_RAISE(plan.md, csv::readPullMetadata(dir + "/metadata.json"));
+  const auto& md = plan.md;
+  const auto refuse = [&](auto&&... parts) {
+    return arrow::Status::Invalid(dir, "/metadata.json: ", parts...,
+                                  " This is not a delivered DBN job this mode reads; "
+                                  "nothing was decoded or written.");
+  };
+  if (md.encoding != "dbn") {
+    return refuse("encoding is `", md.encoding,
+                  "`, not `dbn`. A CSV job is `krn_ingest ingest --data-root`.");
+  }
+  if (md.compression != "zstd") {
+    return refuse("compression is `", md.compression.empty() ? "null" : md.compression,
+                  "`, not `zstd`.");
+  }
+  if (md.splitDuration != "day") {
+    return refuse("split_duration is `",
+                  md.splitDuration.empty() ? "null" : md.splitDuration,
+                  "`, not `day`; each file must be one UTC day for it to be one "
+                  "window.");
+  }
+  if (md.jobId.empty()) return refuse("job_id is missing.");
+  if (md.schema == "trades") {
+    plan.kind = "trades";
+  } else if (md.schema == "mbo") {
+    plan.kind = "book_events";
+  } else {
+    return refuse("schema `", md.schema, "` has no L1 table in this job.");
+  }
+  plan.dbnSchema = md.schema;
+
+  // manifest.json: the vendor's file list for THIS job. A directory holding a
+  // second job's files, or a file of the wrong size, is refused here.
+  std::map<std::string, std::uint64_t> manifest;
+  {
+    ARROW_ASSIGN_OR_RAISE(const auto doc, readJson(dir + "/manifest.json"));
+    if (!doc.IsObject() || !doc.HasMember("job_id") || !doc["job_id"].IsString() ||
+        doc["job_id"].GetString() != md.jobId) {
+      return refuse("manifest.json is not for job_id ", md.jobId, ".");
+    }
+    if (!doc.HasMember("files") || !doc["files"].IsArray()) {
+      return refuse("manifest.json has no `files` array.");
+    }
+    for (const auto& f : doc["files"].GetArray()) {
+      if (!f.IsObject() || !f.HasMember("filename") || !f["filename"].IsString() ||
+          !f.HasMember("size") || !f["size"].IsUint64()) {
+        return refuse("manifest.json has a file entry without filename/size.");
+      }
+      manifest[f["filename"].GetString()] = f["size"].GetUint64();
+    }
+  }
+  std::map<std::uint32_t, std::string> conditions;
+  {
+    ARROW_ASSIGN_OR_RAISE(const auto doc, readJson(dir + "/condition.json"));
+    if (!doc.IsArray()) return refuse("condition.json is not an array.");
+    for (const auto& c : doc.GetArray()) {
+      if (!c.IsObject() || !c.HasMember("date") || !c["date"].IsString() ||
+          !c.HasMember("condition") || !c["condition"].IsString()) {
+        return refuse("condition.json has an entry without date/condition.");
+      }
+      std::string d = c["date"].GetString();  // YYYY-MM-DD
+      d.erase(std::remove(d.begin(), d.end(), '-'), d.end());
+      std::uint32_t day = 0;
+      if (!parseExact(d, day)) return refuse("condition.json date `", d, "`.");
+      conditions[day] = c["condition"].GetString();
+    }
+  }
+
+  // The day files: `<dataset-slug>-YYYYMMDD.<schema>.dbn.zst`, taken from the
+  // MANIFEST so a stray file in the directory is ignored rather than ingested.
+  const std::string suffix = ".dbn.zst";
+  for (const auto& [name, size] : manifest) {
+    if (name.size() <= suffix.size() ||
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+      continue;
+    }
+    const std::string stem = name.substr(0, name.size() - suffix.size());
+    const auto dot  = stem.rfind('.');
+    const auto dash = stem.rfind('-', dot);
+    std::uint32_t day = 0;
+    if (dot == std::string::npos || dash == std::string::npos ||
+        !parseExact(stem.substr(dash + 1, dot - dash - 1), day)) {
+      return refuse("cannot read a yyyymmdd day from `", name, "`.");
+    }
+    const std::string fileSchema = stem.substr(dot + 1);
+    if (fileSchema != md.schema) {
+      return refuse("query.schema is `", md.schema, "` but `", name,
+                    "` is a `", fileSchema, "` file.");
+    }
+    DbnJobDay d;
+    d.day   = day;
+    d.path  = dir + "/" + name;
+    const auto win = dayWindow(day, md.start, md.end);
+    d.fromNs = win.first;
+    d.toNs   = win.second;
+    if (d.toNs <= d.fromNs) {
+      return refuse("`", name, "` is outside the query [", md.start, ", ",
+                    md.end, ").");
+    }
+    const auto c = conditions.find(day);
+    d.condition = c == conditions.end() ? "" : c->second;
+    if (!onlyDays.empty() &&
+        std::find(onlyDays.begin(), onlyDays.end(), day) == onlyDays.end()) {
+      continue;
+    }
+    std::FILE* f = std::fopen(d.path.c_str(), "rb");
+    if (f == nullptr) return refuse("`", name, "` is in manifest.json and not on disk.");
+    std::fseek(f, 0, SEEK_END);
+    d.bytes = static_cast<std::uint64_t>(std::ftell(f));
+    std::fclose(f);
+    if (d.bytes != size) {
+      return refuse("`", name, "` is ", d.bytes, " bytes and manifest.json says ",
+                    size, ".");
+    }
+    plan.days.push_back(std::move(d));
+  }
+  for (const auto want : onlyDays) {
+    const bool have = std::any_of(plan.days.begin(), plan.days.end(),
+                                  [&](const DbnJobDay& d) { return d.day == want; });
+    if (!have) return refuse("--day ", want, " has no file in this job.");
+  }
+  if (plan.days.empty()) return refuse("the manifest lists no .dbn.zst day file.");
+  std::sort(plan.days.begin(), plan.days.end(),
+            [](const DbnJobDay& a, const DbnJobDay& b) { return a.day < b.day; });
+  return plan;
+}
+
+// ===========================================================================
 // run
 // ===========================================================================
 
-arrow::Result<Report> run(const Options& opts) {
-  Report rep;
-  rep.sessionIdRuling = kSessionIdRuling;
-  rep.gapsNote        = kGapsNote;
-  ARROW_ASSIGN_OR_RAISE(rep.target, ch::resolveTarget(opts.url));
-  const ch::Client client(rep.target);
+namespace {
 
-  const std::string root = expandTilde(opts.dataRoot);
+// The two kinds. `kind` is krn.ingest_windows' value (and the table name);
+// `dbnSchema` is the vendor's. They differ for MBO — the vendor calls the
+// schema `mbo` and L1's table is `book_events` — and conflating them writes a
+// completeness row under a kind no reader queries.
+struct KindSpec {
+  const char* kind;
+  const char* dbnSchema;
+  const char* table;
+};
+constexpr KindSpec kSpecs[] = {
+    KindSpec{"trades", "trades", "trades"},
+    KindSpec{"book_events", "mbo", "book_events"},
+};
 
-  // The two kinds. `kind` is krn.ingest_windows' value (and the table name);
-  // `dbnSchema` is the vendor's. They differ for MBO — the vendor calls the
-  // schema `mbo` and L1's table is `book_events` — and conflating them writes a
-  // completeness row under a kind no reader queries.
-  struct KindSpec {
-    const char* kind;
-    const char* dbnSchema;
-    const char* table;
-  };
-  const KindSpec specs[] = {
-      KindSpec{"trades", "trades", "trades"},
-      KindSpec{"book_events", "mbo", "book_events"},
-  };
+// Whole-file and chunked decodes render the same rows. Compared row by row
+// through the ONE renderer rather than by concatenating both renders, which
+// for a delivered mbo day (7M rows) was two strings of ~1 GB each.
+bool sameRenderedRows(const Decoded& a, const Decoded& b) {
+  if (a.ticks.size() != b.ticks.size() || a.book.size() != b.book.size()) return false;
+  for (std::size_t i = 0; i < a.ticks.size(); ++i) {
+    if (renderTradeRow(a.ticks[i], a.symbol, a.venue) !=
+        renderTradeRow(b.ticks[i], b.symbol, b.venue)) {
+      return false;
+    }
+  }
+  for (std::size_t i = 0; i < a.book.size(); ++i) {
+    if (renderBookRow(a.book[i], a.symbol, a.venue) !=
+        renderBookRow(b.book[i], b.symbol, b.venue)) {
+      return false;
+    }
+  }
+  return true;
+}
 
-  // ---- pass 1: the raw half (transcode, retain, decode, round-trip) ------
-  //
-  // Every file becomes canonical rows BEFORE anything is dropped or inserted. A
-  // DROP PARTITION followed by a decode failure would leave the partition empty
-  // with nothing but a state=0 able to say so; doing the whole raw half first
-  // means a bad file is refused with L1 untouched.
-  std::vector<Staged> staged;
+// ---- pass 1 for ONE kind: the raw half (read, decode, round-trip) --------
+//
+// `job`/`day` non-null selects the delivered-DBN source (ENC-1640); otherwise
+// `opts.fromDbnOnly` picks the retained DBN or the CSV, as before.
+arrow::Status stageOne(const Options& opts, const std::string& root,
+                       const KindSpec& spec, const DbnJobPlan* job,
+                       const DbnJobDay* day, Staged& st) {
+  st.rep.kind      = spec.kind;
+  st.rep.dbnSchema = spec.dbnSchema;
+  st.table         = spec.table;
 
-  for (const auto& spec : specs) {
-    Staged st;
-    st.rep.kind      = spec.kind;
-    st.rep.dbnSchema = spec.dbnSchema;
-    st.table         = spec.table;
+  const bool dbnJob = job != nullptr;
+  const std::string dbnPath =
+      dbnJob ? day->path : root + "/xnas-itch-20220610." + spec.dbnSchema + ".dbn";
+  st.rep.dbnPath = dbnPath;
 
-    const std::string dbnPath =
-        root + "/xnas-itch-20220610." + spec.dbnSchema + ".dbn";
-    st.rep.dbnPath = dbnPath;
+  std::vector<std::byte> dbnBytes;
+  std::vector<csv::Transcoded::Probe> probes;
+  bool retainedMatched = false;
+  // The recorded window's inputs, from whichever source this path reads
+  // (metadata.json + CSV on `ingest`, the DBN on `reload` and on a delivered
+  // DBN job). They meet in ONE call to `csv::deliveredWindow` below, after the
+  // decode (ENC-1636).
+  std::uint64_t winStart = 0, winEnd = 0, winLimit = 0, winRecords = 0,
+                winLastTs = 0;
 
-    std::vector<std::byte> dbnBytes;
-    std::vector<csv::Transcoded::Probe> probes;
-    bool retainedMatched = false;
-    // The recorded window's inputs, from whichever source this path reads
-    // (metadata.json + CSV on `ingest`, the DBN on `reload`). They meet in ONE
-    // call to `csv::deliveredWindow` below, after the decode (ENC-1636).
-    std::uint64_t winStart = 0, winEnd = 0, winLimit = 0, winRecords = 0,
-                  winLastTs = 0;
+  if (dbnJob) {
+    // THE DELIVERED FILE IS THE D6 RETAINED FILE. It is opened read-only and
+    // decompressed into scratch; nothing here can write to `dbnPath`.
+    const std::string base =
+        dbnPath.substr(dbnPath.rfind('/') + 1, dbnPath.size() - dbnPath.rfind('/') - 5);
+    const std::string scratch = expandTilde(opts.scratchDir) + "/" + base;
+    ARROW_ASSIGN_OR_RAISE(st.rep.decompressedBytes, decompressZstdFile(dbnPath, scratch));
+    auto read = csv::readFile(scratch);
+    std::remove(scratch.c_str());
+    ARROW_ASSIGN_OR_RAISE(dbnBytes, std::move(read));
+    st.rep.dbnExisted = true;
+    st.rep.jobId      = job->md.jobId;
+    st.rep.condition  = day->condition;
+    st.dataset        = job->md.dataset;
+    if (day->condition != "available") {
+      // condition.json is the vendor's own word on whether the day is whole.
+      return asFinding(arrow::Status::Invalid(
+          "condition.json says `", day->condition.empty() ? "<absent>" : day->condition,
+          "` for ", day->day, ", not `available`; that day is not recorded "
+          "complete (SPEC D11)."));
+    }
+  } else if (opts.fromDbnOnly) {
+    // THE PURE D6 RELOAD. No CSV and no metadata.json: the retained DBN
+    // carries `start`, `end` and `limit` in its own metadata block, which is
+    // what makes "reload must reload from something" a complete statement.
+    if (!fileExists(dbnPath)) {
+      return arrow::Status::IOError(
+          "--from-dbn-only but ", dbnPath,
+          " does not exist. SPEC D6 retains the raw DBN so a reload needs no "
+          "re-pull; run once without the flag to produce it from the CSV.");
+    }
+    ARROW_ASSIGN_OR_RAISE(dbnBytes, csv::readFile(dbnPath));
+    st.rep.dbnExisted = true;
+    st.dataset        = "XNAS.ITCH";  // replaced from the DBN metadata below
+  } else {
+    // metadata.json: PER JOB, and this directory holds two jobs.
+    //
+    // Each vendor zip carries its own metadata.json, and extracting both zips
+    // into one directory leaves ONE of them — silently the wrong one for one
+    // of the two CSVs. So a per-schema sidecar is preferred, and a shared
+    // metadata.json is accepted ONLY if its own `query.schema` matches the
+    // file being read. A mismatch is refused with the command that fixes it,
+    // because the fields at stake (`start`, `end`, `limit`) are exactly what
+    // krn.ingest_windows forms an opinion from.
+    const std::string sidecar = root + "/metadata." + spec.dbnSchema + ".json";
+    const std::string shared  = root + "/metadata.json";
+    const std::string mdPath  = fileExists(sidecar) ? sidecar : shared;
+    ARROW_ASSIGN_OR_RAISE(const auto md, csv::readPullMetadata(mdPath));
+    if (md.schema != spec.dbnSchema) {
+      return arrow::Status::Invalid(
+          mdPath, " describes the `", md.schema, "` job (job_id ", md.jobId,
+          ") but the `", spec.dbnSchema,
+          "` CSV is being read. Two batch jobs extracted into one directory "
+          "leave one metadata.json, and `start`/`end`/`limit` from the wrong "
+          "job would be recorded in krn.ingest_windows as this pull's window. "
+          "Extract the per-job sidecars first, e.g.\n"
+          "    for z in ", root,
+          "/*.zip; do s=$(unzip -p \"$z\" metadata.json | "
+          "python3 -c 'import json,sys; print(json.load(sys.stdin)[\"query\"]"
+          "[\"schema\"])'); unzip -p \"$z\" metadata.json > ", root,
+          "/metadata.$s.json; done");
+    }
+    const std::string csvPath =
+        root + "/xnas-itch-20220610." + spec.dbnSchema + ".csv";
+    st.rep.csvPath = csvPath;
+    st.rep.jobId   = md.jobId;
+    st.dataset     = md.dataset;
 
-    if (opts.fromDbnOnly) {
-      // THE PURE D6 RELOAD. No CSV and no metadata.json: the retained DBN
-      // carries `start`, `end` and `limit` in its own metadata block, which is
-      // what makes "reload must reload from something" a complete statement.
-      if (!fileExists(dbnPath)) {
-        return arrow::Status::IOError(
-            "--from-dbn-only but ", dbnPath,
-            " does not exist. SPEC D6 retains the raw DBN so a reload needs no "
-            "re-pull; run once without the flag to produce it from the CSV.");
-      }
-      ARROW_ASSIGN_OR_RAISE(dbnBytes, csv::readFile(dbnPath));
-      st.rep.dbnExisted = true;
-      st.dataset        = "XNAS.ITCH";  // replaced from the DBN metadata below
-    } else {
-      // metadata.json: PER JOB, and this directory holds two jobs.
-      //
-      // Each vendor zip carries its own metadata.json, and extracting both zips
-      // into one directory leaves ONE of them — silently the wrong one for one
-      // of the two CSVs. So a per-schema sidecar is preferred, and a shared
-      // metadata.json is accepted ONLY if its own `query.schema` matches the
-      // file being read. A mismatch is refused with the command that fixes it,
-      // because the fields at stake (`start`, `end`, `limit`) are exactly what
-      // krn.ingest_windows forms an opinion from.
-      const std::string sidecar = root + "/metadata." + spec.dbnSchema + ".json";
-      const std::string shared  = root + "/metadata.json";
-      const std::string mdPath  = fileExists(sidecar) ? sidecar : shared;
-      ARROW_ASSIGN_OR_RAISE(const auto md, csv::readPullMetadata(mdPath));
-      if (md.schema != spec.dbnSchema) {
-        return arrow::Status::Invalid(
-            mdPath, " describes the `", md.schema, "` job (job_id ", md.jobId,
-            ") but the `", spec.dbnSchema,
-            "` CSV is being read. Two batch jobs extracted into one directory "
-            "leave one metadata.json, and `start`/`end`/`limit` from the wrong "
-            "job would be recorded in krn.ingest_windows as this pull's window. "
-            "Extract the per-job sidecars first, e.g.\n"
-            "    for z in ", root,
-            "/*.zip; do s=$(unzip -p \"$z\" metadata.json | "
-            "python3 -c 'import json,sys; print(json.load(sys.stdin)[\"query\"]"
-            "[\"schema\"])'); unzip -p \"$z\" metadata.json > ", root,
-            "/metadata.$s.json; done");
-      }
-      const std::string csvPath =
-          root + "/xnas-itch-20220610." + spec.dbnSchema + ".csv";
-      st.rep.csvPath = csvPath;
-      st.rep.jobId   = md.jobId;
-      st.dataset     = md.dataset;
+    ARROW_ASSIGN_OR_RAISE(const auto tc,
+                          csv::transcodeCsv(csvPath, md, opts.dbnVersion));
+    st.rep.csvRecords           = tc.records;
+    st.rep.recordsAtLastTsEvent = tc.recordsAtLastTsEvent;
+    st.rep.tsRecvMatchesDelta   = tc.tsRecvMatchesDelta;
+    st.rep.actionCounts         = tc.actionCounts;
+    winStart   = md.start;
+    winEnd     = md.end;
+    winLimit   = md.limit;
+    winRecords = tc.records;
+    winLastTs  = tc.lastTsEvent;
+    st.mappings                 = tc.mappings;
+    probes                      = tc.probes;
 
-      ARROW_ASSIGN_OR_RAISE(const auto tc,
-                            csv::transcodeCsv(csvPath, md, opts.dbnVersion));
-      st.rep.csvRecords           = tc.records;
-      st.rep.recordsAtLastTsEvent = tc.recordsAtLastTsEvent;
-      st.rep.tsRecvMatchesDelta   = tc.tsRecvMatchesDelta;
-      st.rep.actionCounts         = tc.actionCounts;
-      winStart   = md.start;
-      winEnd     = md.end;
-      winLimit   = md.limit;
-      winRecords = tc.records;
-      winLastTs  = tc.lastTsEvent;
-      st.mappings                 = tc.mappings;
-      probes                      = tc.probes;
-
-      // DECODE, THEN RETAIN (finding #3). `retainOnlyIfDecodable` proves the
-      // bytes decode through the real adapter BEFORE the D6 baseline moves, so
-      // a bad `--dbn-version`, a bad CSV or an encoder regression fails with
-      // the previous file intact instead of destroying it.
-      //
-      // `--force-reencode` deletes the existing file, so the deletion also
-      // waits until the replacement has been proven: the old order deleted
-      // first and could leave NO file at all.
-      {
-        const arrow::Status decodes =
-            decodeDbn(tc.dbn, 1u, tc.dbn.size()).status();
-        if (!decodes.ok()) {
-          return asFinding(arrow::Status::Invalid(
-              "the DBN transcoded from ", csvPath,
-              " does not decode through DatabentoAdapter, so it was NOT "
-              "written: ",
-              decodes.message()));
-        }
-        if (opts.forceReencode && fileExists(dbnPath)) {
-          std::remove(dbnPath.c_str());
-        }
-      }
-      ARROW_ASSIGN_OR_RAISE(const auto ret,
-                            retainOnlyIfDecodable(dbnPath, tc.dbn));
-      st.rep.dbnExisted   = ret.existed;
-      st.rep.dbnRewritten = ret.changed;
-      retainedMatched     = ret.existed && !ret.changed;
-
-      // Read the file BACK FROM DISK rather than reusing `tc.dbn`. The insert
-      // path IS the reload path; if retention wrote something other than what
-      // it was handed, this is where it shows.
-      ARROW_ASSIGN_OR_RAISE(dbnBytes, csv::readFile(dbnPath));
-      if (dbnBytes != tc.dbn) {
-        // A FINDING (exit 1), not a could-not-run: the file was written and
-        // read back fine, and what came back is wrong. Was IOError, which
-        // `main` mapped to exit 2 — finding #1.
+    // DECODE, THEN RETAIN (finding #3). `retainOnlyIfDecodable` proves the
+    // bytes decode through the real adapter BEFORE the D6 baseline moves, so
+    // a bad `--dbn-version`, a bad CSV or an encoder regression fails with
+    // the previous file intact instead of destroying it.
+    //
+    // `--force-reencode` deletes the existing file, so the deletion also
+    // waits until the replacement has been proven: the old order deleted
+    // first and could leave NO file at all.
+    {
+      const arrow::Status decodes =
+          decodeDbn(tc.dbn, 1u, tc.dbn.size()).status();
+      if (!decodes.ok()) {
         return asFinding(arrow::Status::Invalid(
-            "the retained DBN at ", dbnPath,
-            " does not read back as the bytes just written. L1 is a rebuildable "
-            "projection of these files (SPEC D6); a file that does not read back "
-            "is not a baseline."));
+            "the DBN transcoded from ", csvPath,
+            " does not decode through DatabentoAdapter, so it was NOT "
+            "written: ",
+            decodes.message()));
+      }
+      if (opts.forceReencode && fileExists(dbnPath)) {
+        std::remove(dbnPath.c_str());
       }
     }
-    st.rep.dbnBytes = dbnBytes.size();
+    ARROW_ASSIGN_OR_RAISE(const auto ret,
+                          retainOnlyIfDecodable(dbnPath, tc.dbn));
+    st.rep.dbnExisted   = ret.existed;
+    st.rep.dbnRewritten = ret.changed;
+    retainedMatched     = ret.existed && !ret.changed;
 
-    st.sessionId = opts.sessionId != 0 ? opts.sessionId : deriveSessionId(dbnBytes);
-    st.rep.sessionId = st.sessionId;
+    // Read the file BACK FROM DISK rather than reusing `tc.dbn`. The insert
+    // path IS the reload path; if retention wrote something other than what
+    // it was handed, this is where it shows.
+    ARROW_ASSIGN_OR_RAISE(dbnBytes, csv::readFile(dbnPath));
+    if (dbnBytes != tc.dbn) {
+      // A FINDING (exit 1), not a could-not-run: the file was written and
+      // read back fine, and what came back is wrong. Was IOError, which
+      // `main` mapped to exit 2 — finding #1.
+      return asFinding(arrow::Status::Invalid(
+          "the retained DBN at ", dbnPath,
+          " does not read back as the bytes just written. L1 is a rebuildable "
+          "projection of these files (SPEC D6); a file that does not read back "
+          "is not a baseline."));
+    }
+  }
+  st.rep.dbnBytes = dbnJob ? day->bytes : dbnBytes.size();
+  if (!dbnJob) st.rep.decompressedBytes = dbnBytes.size();
 
-    // ---- decode twice, at two chunkings, and compare the RENDERED rows ---
-    ARROW_ASSIGN_OR_RAISE(auto whole,
-                          decodeDbn(dbnBytes, st.sessionId, dbnBytes.size()));
+  // On a DBN job the session is FNV-1a-32 of the DECOMPRESSED stream, which
+  // is what the adapter decodes and what a `.dbn` reload of the same data
+  // would hash: the same records give the same session however they were
+  // compressed (kSessionIdRuling).
+  st.sessionId = opts.sessionId != 0 ? opts.sessionId : deriveSessionId(dbnBytes);
+  st.rep.sessionId = st.sessionId;
+
+  // ---- decode twice, at two chunkings, and compare the RENDERED rows ---
+  ARROW_ASSIGN_OR_RAISE(auto whole,
+                        decodeDbn(dbnBytes, st.sessionId, dbnBytes.size()));
+  std::ostringstream note;
+  bool ok = true;
+  {
     // 8191: a chunk that lands inside the 100-byte fixed metadata block, inside
     // the variable symbology section and inside records of both 56 and 48
     // bytes, so no boundary in the file is also a feed boundary.
     ARROW_ASSIGN_OR_RAISE(const auto chunked, decodeDbn(dbnBytes, st.sessionId, 8191));
-
-    std::ostringstream note;
-    bool ok = true;
-    const std::string rowsWhole   = renderRows(whole);
-    const std::string rowsChunked = renderRows(chunked);
-    if (rowsWhole != rowsChunked) {
+    if (!sameRenderedRows(whole, chunked)) {
       ok = false;
       note << "the retained DBN decodes to DIFFERENT canonical rows depending on "
               "the feed chunking (whole file vs 8191-byte chunks): "
@@ -646,401 +927,488 @@ arrow::Result<Report> run(const Options& opts) {
            << chunked.ticks.size() << "/" << chunked.book.size()
            << " tick/book records. ";
     }
-
-    // The second axis, and the stronger one: the canonical rows must carry the
-    // (ts_event, provider_seq, price) the CSV carried, for every record that
-    // produces a row. This is what shows the CSV -> DBN -> canonical legs
-    // LOSSLESS without a second CSV -> canonical mapping existing to compare
-    // against (SPEC D1 forbids that second mapping). `Action::None` produces no
-    // row by design — DBN's own "has no effect on the book" — so it is the one
-    // action excluded.
-    if (ok && !probes.empty()) {
-      using Triple = std::tuple<std::int64_t, std::uint64_t, std::int64_t>;
-      std::vector<Triple> want;
-      // ⚠ CODE-REVIEW FINDING #11: the exclusion is MBO-ONLY. `onMbo` accepts
-      // `Action::None` and deliberately produces no book row ("there is no
-      // BookAction for 'no effect' and inventing one would put a no-op mutation
-      // into the replay stream"), but `onTrade` emits a `TickRecord` for EVERY
-      // `trades` record whatever its action. Excluding `N` for both schemas
-      // therefore made a `trades` CSV containing one `action='N'` row fail the
-      // round trip and abort a perfectly valid ingest.
-      //
-      // UNTRIGGERED ON THIS SAMPLE, and the near-miss is worth naming: our
-      // `trades` action column is 1000/1000 `T`. The 546 `N` values are in
-      // `side`, a DIFFERENT COLUMN with a different meaning ("no side specified
-      // by the original source"), and conflating the two is exactly how this
-      // bug would have been argued away as already covered.
-      const bool skipActionNone = std::string(spec.dbnSchema) == "mbo";
-      for (const auto& p : probes) {
-        if (skipActionNone && p.action == static_cast<char>(dbn::Action::None)) {
-          continue;
-        }
-        want.emplace_back(static_cast<std::int64_t>(p.tsEvent),
-                          static_cast<std::uint64_t>(p.sequence),
-                          p.price == dbn::kUndefPrice ? kNoPrice : p.price);
-      }
-      std::vector<Triple> got;
-      for (const auto& t : whole.ticks) {
-        got.emplace_back(t.header.tsEventNs, t.header.providerSeq, t.price);
-      }
-      for (const auto& b : whole.book) {
-        got.emplace_back(b.header.tsEventNs, b.header.providerSeq, b.price);
-      }
-      std::sort(want.begin(), want.end());
-      std::sort(got.begin(), got.end());
-      if (want != got) {
-        ok = false;
-        note << "the (ts_event, provider_seq, price) multiset of the canonical "
-                "rows does not match the CSV's: "
-             << want.size() << " expected, " << got.size() << " produced. ";
-      } else {
-        note << "the (ts_event, provider_seq, price) multiset of all "
-             << got.size()
-             << " canonical rows matches the CSV's exactly; whole-file and "
-                "8191-byte-chunk feeds of the retained DBN render identical "
-                "rows";
-        if (retainedMatched) {
-          note << "; and re-transcoding the CSV reproduced the already-retained "
-                  "DBN byte-for-byte";
-        }
-      }
-    } else if (ok) {
-      note << "whole-file and 8191-byte-chunk feeds of the retained DBN render "
-              "identical rows ("
-           << whole.ticks.size() << " ticks, " << whole.book.size()
-           << " book events); no CSV was read, so there is no CSV cross-check "
-              "on this run";
-    }
-    st.rep.roundTripOk   = ok;
-    st.rep.roundTripNote = note.str();
-    if (!ok) {
-      // A FINDING (exit 1). The header's own exit-code table names the
-      // round-trip mismatch as the archetypal one; `main` nonetheless reported
-      // it as could-not-run until finding #1.
-      return asFinding(arrow::Status::Invalid(
-          "round-trip failed for ", spec.kind, ": ", st.rep.roundTripNote));
-    }
-
-    // ⚠ CODE-REVIEW FINDING #12. The insert below renders ONLY `ticks` for
-    // `trades` and ONLY `book` for `book_events`, so a file that decoded into
-    // the other vector inserted ZERO rows and the window was still recorded
-    // `state=1` — a completeness claim over nothing, which is the one thing
-    // this table must never say. Unreachable on the CSV path (the transcoder's
-    // rtype gate refuses a schema/rtype mismatch) and REACHABLE on `reload`,
-    // where the DBN on disk is constrained by nothing at all: rename
-    // `*.trades.dbn` over `*.mbo.dbn` and the mbo kind decodes 1000 ticks, zero
-    // book events, and claims the window.
-    {
-      const bool wantTicks = std::string(spec.kind) == "trades";
-      const std::size_t wanted = wantTicks ? whole.ticks.size() : whole.book.size();
-      const std::size_t other  = wantTicks ? whole.book.size() : whole.ticks.size();
-      if (other != 0 || wanted == 0) {
-        return asFinding(arrow::Status::Invalid(
-            "the DBN for kind `", spec.kind, "` decoded into ",
-            whole.ticks.size(), " tick record(s) and ", whole.book.size(),
-            " book record(s), but krn.", spec.table, " holds only the ",
-            wantTicks ? "tick" : "book",
-            " kind. Inserting the matching half and recording the window "
-            "complete would assert coverage over rows that were silently "
-            "dropped (SPEC D11). Check that ", dbnPath,
-            " really is the `", spec.dbnSchema, "` pull."));
-      }
-    }
-
-    // krn.gaps (ENC-1506). No seq-derived row is inferred — see Gaps.hpp —
-    // and the count of what a naive detector would have written is reported
-    // so the refusal is a number, not an empty table.
-    {
-      const auto pts = std::string(spec.kind) == "trades"
-                           ? gaps::seqPoints(whole.ticks)
-                           : gaps::seqPoints(whole.book);
-      const gaps::Inference inf = gaps::infer(whole.meta, pts);
-      st.rep.gapPullScope     = gaps::toString(inf.scope);
-      st.rep.gapNaiveSeqJumps = inf.naiveSeqJumps;
-      st.rep.gapRowsWritten   = inf.rows.size();
-      st.rep.gapMaybeBadBook  = inf.vendorMaybeBadBook;
-      st.rep.gapRefusal       = inf.refusal;
-      if (!inf.rows.empty()) {
-        // Unreachable while `infer` writes nothing. Here so that a future
-        // branch that starts emitting rows fails loudly until this job learns
-        // to write them, rather than computing them and dropping them.
-        return asFinding(arrow::Status::Invalid(
-            "gaps::infer returned ", inf.rows.size(), " row(s) for `",
-            spec.kind, "` and this job has no krn.gaps writer."));
-      }
-      if (inf.vendorMaybeBadBook != 0) {
-        // The vendor says the channel lost data, and krn.gaps cannot hold it
-        // (the flag carries no bounds). Recording this window complete would
-        // be a completeness claim over a declared hole — SPEC D11's failure —
-        // so the window is refused, before any table is touched.
-        return asFinding(arrow::Status::Invalid(
-            inf.vendorMaybeBadBook, " `", spec.kind, "` record(s) in ", dbnPath,
-            " carry F_MAYBE_BAD_BOOK, Databento's 'unrecoverable gap detected in "
-            "the channel'. The flag has no seq or event-time bounds, so no "
-            "krn.gaps row can be written for it, and the window is not recorded "
-            "complete (docs/data-layer.md 8.8, ENC-1506)."));
-      }
-    }
-
-    st.rep.decodedRecords  = whole.stats.recordsIn;
-    st.rep.canonicalRows   = whole.ticks.size() + whole.book.size();
-
-    // ENC-1484's number, free while the records are in hand and measured HERE
-    // rather than beside the insert so `--no-insert` reports it too: D5 picked
-    // plain MergeTree because (symbol, ts_event, provider_seq) is NOT unique,
-    // and this is by how much. One symbol, so the symbol leg is constant.
-    {
-      std::vector<std::pair<std::int64_t, std::uint64_t>> keys;
-      keys.reserve(st.rep.canonicalRows);
-      for (const auto& t : whole.ticks) {
-        keys.emplace_back(t.header.tsEventNs, t.header.providerSeq);
-      }
-      for (const auto& b2 : whole.book) {
-        keys.emplace_back(b2.header.tsEventNs, b2.header.providerSeq);
-      }
-      std::sort(keys.begin(), keys.end());
-      const auto last = std::unique(keys.begin(), keys.end());
-      st.rep.distinctSortKeys = static_cast<std::size_t>(last - keys.begin());
-      st.rep.duplicateSortKeys = keys.size() - st.rep.distinctSortKeys;
-    }
-    st.rep.sideUnspecified = whole.stats.sideUnspecified;
-    st.rep.symbol          = whole.symbol;
-    st.rep.venue           = whole.venue;
-    st.rep.instrumentId    = whole.instrumentId;
-    st.dataset             = whole.meta.dataset;
-
-    if (opts.fromDbnOnly) {
-      // The window from the DBN's own metadata — the whole point of writing
-      // `limit` into it — and from the RECORDS the adapter framed, not the
-      // canonical rows: an mbo action `N` record counts toward `limit` and
-      // yields no row (ENC-1636; it used to take the max over rows).
-      winStart   = whole.meta.start;
-      winEnd     = whole.meta.end;
-      winLimit   = whole.meta.limit;
-      winRecords = whole.stats.recordsIn;
-      winLastTs  = whole.stats.lastTsEvent;
-      st.rep.recordsAtLastTsEvent =
-          static_cast<std::size_t>(whole.stats.recordsAtLastTsEvent);
-      for (const auto& m : whole.meta.mappings) {
-        for (const auto& iv : m.intervals) {
-          std::uint32_t id = 0;
-          if (!parseExact(iv.symbol, id)) continue;  // not an id in this interval
-          st.mappings.push_back(csv::Transcoded::Mapping{
-              id, m.rawSymbol, iv.startDate,
-              iv.endDate > iv.startDate ? iv.endDate - 1 : iv.startDate});
-        }
-      }
-    }
-
-    // `lastTsEvent` is the delivered end only if ts_event never descends. The
-    // CSV path refuses a descent in the transcoder; a retained DBN is checked
-    // here, so `reload` refuses what `ingest` would have.
-    if (whole.stats.tsEventDescents != 0) {
-      return asFinding(arrow::Status::Invalid(
-          dbnPath, " has ", whole.stats.tsEventDescents,
-          " record(s) whose ts_event is below the previous record's. The "
-          "recorded window's exclusive end is the LAST record's ts_event, which "
-          "is the delivered end only in time order; refused rather than "
-          "published (docs §8.8)."));
-    }
-    // On `ingest` the CSV's count and last ts_event must be what the decoder
-    // saw in the retained DBN, or the two paths would read different inputs.
-    if (!opts.fromDbnOnly && (winRecords != whole.stats.recordsIn ||
-                              winLastTs != whole.stats.lastTsEvent)) {
-      return asFinding(arrow::Status::Invalid(
-          "the CSV for ", spec.kind, " has ", winRecords,
-          " record(s) ending at ts_event ", winLastTs, " but its retained DBN "
-          "decodes ", whole.stats.recordsIn, " ending at ",
-          whole.stats.lastTsEvent, "; `reload` would record a different window."));
-    }
-    {
-      const csv::DeliveredWindow w =
-          csv::deliveredWindow(winStart, winEnd, winLimit, winRecords, winLastTs);
-      st.rep.pullLimit        = winLimit;
-      st.rep.truncatedByLimit = w.truncatedByLimit;
-      st.rep.requestedFromNs  = static_cast<std::int64_t>(winStart);
-      st.rep.requestedToNs    = static_cast<std::int64_t>(winEnd);
-      st.rep.recordedFromNs   = static_cast<std::int64_t>(w.fromNs);
-      st.rep.recordedToNs     = static_cast<std::int64_t>(w.toNs);
-    }
-
-    if (st.rep.recordedToNs <= st.rep.recordedFromNs) {
-      return asFinding(arrow::Status::Invalid(
-          "the delivered window for ", spec.kind, " came out empty (",
-          formatWindow(st.rep.recordedFromNs, st.rep.recordedToNs),
-          "). Writing it as an ingested window would assert coverage of "
-          "nothing."));
-    }
-
-    st.decoded = std::move(whole);
-    staged.push_back(std::move(st));
   }
+  std::vector<std::byte>().swap(dbnBytes);  // the decoded rows are what is kept
 
-  if (opts.noInsert) {
-    for (const auto& st : staged) rep.kinds.push_back(st.rep);
-    return rep;
-  }
-
-  // ---- preflight: the table holds every column the INSERT names ---------
-  //
-  // Before ANY write. An L1 created before a column was added (ENC-1494's
-  // `book_events.aggressor`) refuses the INSERT, but only after the DROP
-  // PARTITION below has emptied the day: measured, the job exited 2 with the
-  // window at state=2 and book_events at 0 rows. Recoverable by reload, and
-  // never reported complete, but it destroyed data it could have refused to
-  // touch. `apply.py verify` names the drift; this makes the job say so first.
-  for (const auto& st : staged) {
-    std::string q = "SELECT ";
-    q += st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns;
-    q += " FROM krn.";
-    q += st.table;
-    q += " LIMIT 0 FORMAT TabSeparated";
-    const auto probe = client.select(q);
-    if (!probe.ok()) {
-      return arrow::Status::Invalid(
-          "krn.", st.table, " does not hold every column this build inserts (",
-          st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns,
-          "): ", probe.status().message(),
-          "\nNothing has been dropped or written. The table predates this "
-          "build's schema: `data/schema/apply.py verify` names the difference, "
-          "and the remedy is re-creating the table from clickhouse.sql and "
-          "reloading from the retained DBN (docs/data-layer.md §8.4).");
-    }
-  }
-
-  // ---- pass 2: drop, insert, record -------------------------------------
-  for (auto& st : staged) {
-    // Day partitions this kind's rows land in, plus the recorded window's own
-    // days: a window may claim a day the rows do not reach (a quiet tail), and
-    // that day's partition is still being asserted over.
-    std::set<std::uint32_t> days = daysOf(st.rep.recordedFromNs, st.rep.recordedToNs);
-    for (const auto& t : st.decoded.ticks) {
-      days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(t.header.tsEventNs)));
-    }
-    for (const auto& b : st.decoded.book) {
-      days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(b.header.tsEventNs)));
-    }
-
-    // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
+  // The second axis, and the stronger one: the canonical rows must carry the
+  // (ts_event, provider_seq, price) the CSV carried, for every record that
+  // produces a row. This is what shows the CSV -> DBN -> canonical legs
+  // LOSSLESS without a second CSV -> canonical mapping existing to compare
+  // against (SPEC D1 forbids that second mapping). `Action::None` produces no
+  // row by design — DBN's own "has no effect on the book" — so it is the one
+  // action excluded.
+  if (ok && !probes.empty()) {
+    using Triple = std::tuple<std::int64_t, std::uint64_t, std::int64_t>;
+    std::vector<Triple> want;
+    // ⚠ CODE-REVIEW FINDING #11: the exclusion is MBO-ONLY. `onMbo` accepts
+    // `Action::None` and deliberately produces no book row ("there is no
+    // BookAction for 'no effect' and inventing one would put a no-op mutation
+    // into the replay stream"), but `onTrade` emits a `TickRecord` for EVERY
+    // `trades` record whatever its action. Excluding `N` for both schemas
+    // therefore made a `trades` CSV containing one `action='N'` row fail the
+    // round trip and abort a perfectly valid ingest.
     //
-    // From the warning block in clickhouse.sql: a DROP PARTITION invalidates
-    // EVERY recorded window's completeness rows for that partition, not only
-    // the window being re-ingested, because partitions are day-granular while
-    // completeness is per (symbol, window). Without this step another window's
-    // newest row still reads state=1 over an emptied partition, and isComplete
-    // returns true over nothing.
-    //
-    // So before dropping: every recorded window of this kind intersecting a
-    // partition about to go gets a state=3 (invalidated) row, our own symbol's
-    // other windows included (ENC-1635). Only the window being written is
-    // left out; the state=0 below covers it. `invalidationTargets` decides.
-    for (const std::uint32_t day : days) {
-      const auto dayFrom = static_cast<std::int64_t>(csv::midnightUtcNs(day));
-      const std::int64_t dayTo = dayFrom + 86400000000000LL;
-      std::ostringstream q;
-      q << "SELECT DISTINCT symbol, toUnixTimestamp64Nano(from_ts), "
-           "toUnixTimestamp64Nano(to_ts) FROM krn.ingest_windows WHERE kind = "
-        << ch::sqlQuote(st.rep.kind)
-        << " AND from_ts < fromUnixTimestamp64Nano(toInt64(" << dayTo
-        << "), 'UTC') AND to_ts > fromUnixTimestamp64Nano(toInt64(" << dayFrom
-        << "), 'UTC') FORMAT TabSeparated";
-      ARROW_ASSIGN_OR_RAISE(const auto found, client.select(q.str()));
-      std::vector<RecordedWindow> intersecting;
-      intersecting.reserve(found.size());
-      for (const auto& r : found) {
-        // ⚠ CODE-REVIEW FINDING #6. This was `if (r.size() != 3) continue;` —
-        // a SILENT SKIP, inside the block whose entire stated purpose is
-        // preventing `isComplete` from returning true over an emptied
-        // partition. Skipping a row here means some window keeps a `state=1`
-        // row over data this loop is about to drop, which is the exact failure
-        // the block exists to prevent, reached by the code meant to prevent
-        // it. It refuses now.
-        if (r.size() != 3) {
-          return arrow::Status::Invalid(
-              "a krn.ingest_windows row came back with ", r.size(),
-              " field(s) instead of 3 while collecting the recorded windows "
-              "whose completeness this DROP PARTITION invalidates. Refusing "
-              "rather than skipping: a skipped row leaves a window asserting "
-              "state=1 over a partition about to be emptied. Nothing has been "
-              "dropped yet.");
-        }
-        RecordedWindow w;
-        w.symbol = r[0];
-        if (!parseExact(r[1], w.fromTsNs)) return badField("from_ts", r[1]);
-        if (!parseExact(r[2], w.toTsNs)) return badField("to_ts", r[2]);
-        intersecting.push_back(std::move(w));
+    // UNTRIGGERED ON THIS SAMPLE, and the near-miss is worth naming: our
+    // `trades` action column is 1000/1000 `T`. The 546 `N` values are in
+    // `side`, a DIFFERENT COLUMN with a different meaning ("no side specified
+    // by the original source"), and conflating the two is exactly how this
+    // bug would have been argued away as already covered.
+    const bool skipActionNone = std::string(spec.dbnSchema) == "mbo";
+    for (const auto& p : probes) {
+      if (skipActionNone && p.action == static_cast<char>(dbn::Action::None)) {
+        continue;
       }
-      for (const auto& w : invalidationTargets(intersecting, st.rep.symbol,
-                                               st.rep.recordedFromNs,
-                                               st.rep.recordedToNs)) {
-        ARROW_RETURN_NOT_OK(writeWindowRow(
-            client, w.symbol, st.rep.kind, w.fromTsNs, w.toTsNs,
-            /*state=*/3, /*rowsInserted=*/0, st.sessionId,
-            "invalidated by DROP PARTITION " + std::to_string(day) + " for " +
-                st.rep.symbol));
-        rep.invalidationRows.push_back(
-            w.symbol + "/" + st.rep.kind + " " + std::to_string(w.fromTsNs) +
-            ".." + std::to_string(w.toTsNs) + " -> state=3 (partition " +
-            std::to_string(day) + ")");
-      }
+      want.emplace_back(static_cast<std::int64_t>(p.tsEvent),
+                        static_cast<std::uint64_t>(p.sequence),
+                        p.price == dbn::kUndefPrice ? kNoPrice : p.price);
     }
-
-    // ---- state=0, in flight --------------------------------------------
-    ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
-                                       st.rep.recordedFromNs, st.rep.recordedToNs,
-                                       /*state=*/0, /*rowsInserted=*/0,
-                                       st.sessionId, st.rep.jobId));
-
-    // ---- DROP PARTITION, then reload (D5) ------------------------------
-    for (const std::uint32_t day : days) {
-      std::ostringstream q;
-      q << "ALTER TABLE krn." << st.table << " DROP PARTITION " << day;
-      ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
-      rep.partitionsDropped.push_back(st.table + ":" + std::to_string(day));
+    std::vector<Triple> got;
+    for (const auto& t : whole.ticks) {
+      got.emplace_back(t.header.tsEventNs, t.header.providerSeq, t.price);
     }
-
-    // ---- sort by the physical sort key, then insert ---------------------
-    //
-    // docs 8.6: "Insert symbol-sorted batches per day partition — the key leads
-    // with symbol, so raw DBN file order (time-ordered) forces a per-part
-    // re-sort. The ingest job owns this; a background merge cannot fix it after
-    // the fact." At one symbol and one day this sort is the identity, which is
-    // exactly why it goes in now: getting it wrong is invisible here and
-    // expensive at the universe.
-    struct Row {
-      std::int64_t  tsEventNs = 0;
-      std::uint64_t providerSeq = 0;
-      std::string   text;
-    };
-    std::vector<Row> rows;
-    if (st.rep.kind == "trades") {
-      for (const auto& t : st.decoded.ticks) {
-        rows.push_back(Row{t.header.tsEventNs, t.header.providerSeq,
-                           renderTradeRow(t, st.decoded.symbol, st.decoded.venue)});
-      }
+    for (const auto& b : whole.book) {
+      got.emplace_back(b.header.tsEventNs, b.header.providerSeq, b.price);
+    }
+    std::sort(want.begin(), want.end());
+    std::sort(got.begin(), got.end());
+    if (want != got) {
+      ok = false;
+      note << "the (ts_event, provider_seq, price) multiset of the canonical "
+              "rows does not match the CSV's: "
+           << want.size() << " expected, " << got.size() << " produced. ";
     } else {
-      for (const auto& b : st.decoded.book) {
-        rows.push_back(Row{b.header.tsEventNs, b.header.providerSeq,
-                           renderBookRow(b, st.decoded.symbol, st.decoded.venue)});
+      note << "the (ts_event, provider_seq, price) multiset of all "
+           << got.size()
+           << " canonical rows matches the CSV's exactly; whole-file and "
+              "8191-byte-chunk feeds of the retained DBN render identical "
+              "rows";
+      if (retainedMatched) {
+        note << "; and re-transcoding the CSV reproduced the already-retained "
+                "DBN byte-for-byte";
       }
     }
-    // One symbol, so the symbol leg of (symbol, ts_event, provider_seq) is
-    // constant and `stable_sort` on the remaining two is the same order — with
-    // ties left in arrival order, which matters because the key is NOT unique.
-    std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-      return a.tsEventNs != b.tsEventNs ? a.tsEventNs < b.tsEventNs
-                                        : a.providerSeq < b.providerSeq;
-    });
+  } else if (ok) {
+    note << "whole-file and 8191-byte-chunk feeds of the retained DBN render "
+            "identical rows ("
+         << whole.ticks.size() << " ticks, " << whole.book.size()
+         << " book events); no CSV was read, so there is no CSV cross-check "
+            "on this run";
+  }
+  st.rep.roundTripOk   = ok;
+  st.rep.roundTripNote = note.str();
+  if (!ok) {
+    // A FINDING (exit 1). The header's own exit-code table names the
+    // round-trip mismatch as the archetypal one; `main` nonetheless reported
+    // it as could-not-run until finding #1.
+    return asFinding(arrow::Status::Invalid(
+        "round-trip failed for ", spec.kind, ": ", st.rep.roundTripNote));
+  }
 
+  // ⚠ CODE-REVIEW FINDING #12. The insert below renders ONLY `ticks` for
+  // `trades` and ONLY `book` for `book_events`, so a file that decoded into
+  // the other vector inserted ZERO rows and the window was still recorded
+  // `state=1` — a completeness claim over nothing, which is the one thing
+  // this table must never say. Unreachable on the CSV path (the transcoder's
+  // rtype gate refuses a schema/rtype mismatch) and REACHABLE on `reload`,
+  // where the DBN on disk is constrained by nothing at all: rename
+  // `*.trades.dbn` over `*.mbo.dbn` and the mbo kind decodes 1000 ticks, zero
+  // book events, and claims the window.
+  {
+    const bool wantTicks = std::string(spec.kind) == "trades";
+    const std::size_t wanted = wantTicks ? whole.ticks.size() : whole.book.size();
+    const std::size_t other  = wantTicks ? whole.book.size() : whole.ticks.size();
+    if (other != 0 || wanted == 0) {
+      return asFinding(arrow::Status::Invalid(
+          "the DBN for kind `", spec.kind, "` decoded into ",
+          whole.ticks.size(), " tick record(s) and ", whole.book.size(),
+          " book record(s), but krn.", spec.table, " holds only the ",
+          wantTicks ? "tick" : "book",
+          " kind. Inserting the matching half and recording the window "
+          "complete would assert coverage over rows that were silently "
+          "dropped (SPEC D11). Check that ", dbnPath,
+          " really is the `", spec.dbnSchema, "` pull."));
+    }
+  }
+
+  // ---- the vendor's start-of-day book snapshot (kSnapshotRuling) --------
+  {
+    const auto before = whole.book.size();
+    std::erase_if(whole.book, [](const BookRecord& b) {
+      return (b.flags & dbn::kFlagSnapshot) != 0;
+    });
+    st.rep.snapshotExcluded = before - whole.book.size();
+    if (whole.book.empty() && std::string(spec.kind) == "book_events") {
+      return asFinding(arrow::Status::Invalid(
+          dbnPath, " decoded only F_SNAPSHOT book records; there is no event "
+          "in the window to record."));
+    }
+  }
+  st.rep.actionNone = static_cast<std::size_t>(whole.stats.actionNone);
+
+  // krn.gaps (ENC-1506). No seq-derived row is inferred — see Gaps.hpp —
+  // and the count of what a naive detector would have written is reported
+  // so the refusal is a number, not an empty table.
+  {
+    const auto pts = std::string(spec.kind) == "trades"
+                         ? gaps::seqPoints(whole.ticks)
+                         : gaps::seqPoints(whole.book);
+    const gaps::Inference inf = gaps::infer(whole.meta, pts);
+    st.rep.gapPullScope     = gaps::toString(inf.scope);
+    st.rep.gapNaiveSeqJumps = inf.naiveSeqJumps;
+    st.rep.gapRowsWritten   = inf.rows.size();
+    st.rep.gapMaybeBadBook  = inf.vendorMaybeBadBook;
+    st.rep.gapRefusal       = inf.refusal;
+    if (!inf.rows.empty()) {
+      // Unreachable while `infer` writes nothing. Here so that a future
+      // branch that starts emitting rows fails loudly until this job learns
+      // to write them, rather than computing them and dropping them.
+      return asFinding(arrow::Status::Invalid(
+          "gaps::infer returned ", inf.rows.size(), " row(s) for `",
+          spec.kind, "` and this job has no krn.gaps writer."));
+    }
+    if (inf.vendorMaybeBadBook != 0) {
+      // The vendor says the channel lost data, and krn.gaps cannot hold it
+      // (the flag carries no bounds). Recording this window complete would
+      // be a completeness claim over a declared hole — SPEC D11's failure —
+      // so the window is refused, before any table is touched.
+      return asFinding(arrow::Status::Invalid(
+          inf.vendorMaybeBadBook, " `", spec.kind, "` record(s) in ", dbnPath,
+          " carry F_MAYBE_BAD_BOOK, Databento's 'unrecoverable gap detected in "
+          "the channel'. The flag has no seq or event-time bounds, so no "
+          "krn.gaps row can be written for it, and the window is not recorded "
+          "complete (docs/data-layer.md 8.8, ENC-1506)."));
+    }
+  }
+
+  st.rep.decodedRecords  = whole.stats.recordsIn;
+  st.rep.canonicalRows   = whole.ticks.size() + whole.book.size();
+  st.rep.dbnVersionNote  = "DBN v" + std::to_string(whole.meta.version);
+
+  // EVERY DECODED RECORD IS ACCOUNTED FOR: a row, an excluded snapshot record,
+  // an mbo action N, or a declared rtype this job does not consume. A record
+  // in none of those is a row lost between the adapter and the insert.
+  if (st.rep.canonicalRows + st.rep.snapshotExcluded + st.rep.actionNone +
+          whole.stats.recordsSkipped !=
+      whole.stats.recordsIn) {
+    return asFinding(arrow::Status::Invalid(
+        dbnPath, ": ", whole.stats.recordsIn, " record(s) decoded but ",
+        st.rep.canonicalRows, " row(s) + ", st.rep.snapshotExcluded,
+        " snapshot + ", st.rep.actionNone, " action N + ",
+        whole.stats.recordsSkipped, " skipped do not add up to it."));
+  }
+
+  // ENC-1484's number, free while the records are in hand and measured HERE
+  // rather than beside the insert so `--no-insert` reports it too: D5 picked
+  // plain MergeTree because (symbol, ts_event, provider_seq) is NOT unique,
+  // and this is by how much. One symbol, so the symbol leg is constant.
+  {
+    std::vector<std::pair<std::int64_t, std::uint64_t>> keys;
+    keys.reserve(st.rep.canonicalRows);
+    for (const auto& t : whole.ticks) {
+      keys.emplace_back(t.header.tsEventNs, t.header.providerSeq);
+    }
+    for (const auto& b2 : whole.book) {
+      keys.emplace_back(b2.header.tsEventNs, b2.header.providerSeq);
+    }
+    std::sort(keys.begin(), keys.end());
+    const auto last = std::unique(keys.begin(), keys.end());
+    st.rep.distinctSortKeys = static_cast<std::size_t>(last - keys.begin());
+    st.rep.duplicateSortKeys = keys.size() - st.rep.distinctSortKeys;
+  }
+  st.rep.sideUnspecified = whole.stats.sideUnspecified;
+  st.rep.symbol          = whole.symbol;
+  st.rep.venue           = whole.venue;
+  st.rep.instrumentId    = whole.instrumentId;
+  st.dataset             = whole.meta.dataset;
+
+  if (dbnJob) {
+    // The job's metadata.json and the file's own DBN metadata must describe
+    // the same pull. A disagreement is metadata.json not matching its files:
+    // COULD-NOT-RUN, the same class as a missing metadata.json.
+    const std::uint16_t wantSchema = static_cast<std::uint16_t>(
+        job->dbnSchema == "mbo" ? dbn::Schema::Mbo : dbn::Schema::Trades);
+    if (whole.meta.dataset != job->md.dataset || !whole.meta.schema.has_value() ||
+        *whole.meta.schema != wantSchema) {
+      return arrow::Status::Invalid(
+          dbnPath, " is DBN dataset `", whole.meta.dataset, "` schema ",
+          whole.meta.schema.has_value() ? std::to_string(*whole.meta.schema) : "mixed",
+          " but metadata.json says `", job->md.dataset, "` `", job->md.schema,
+          "`. Nothing was written.");
+    }
+    if (static_cast<std::int64_t>(whole.meta.start) != day->fromNs ||
+        static_cast<std::int64_t>(whole.meta.end) != day->toNs) {
+      return arrow::Status::Invalid(
+          dbnPath, " declares [", whole.meta.start, ", ", whole.meta.end,
+          ") in its DBN metadata, and this day of the query is ",
+          formatWindow(day->fromNs, day->toNs),
+          ". The window recorded is the day's; a file that disagrees is not "
+          "this day. Nothing was written.");
+    }
+  }
+
+  if (opts.fromDbnOnly || dbnJob) {
+    // The window from the DBN's own metadata — the whole point of writing
+    // `limit` into it — and from the RECORDS the adapter framed, not the
+    // canonical rows: an mbo action `N` record counts toward `limit` and
+    // yields no row (ENC-1636; it used to take the max over rows). On a DBN
+    // job the metadata's [start, end) was just proven to be the day's window.
+    winStart   = whole.meta.start;
+    winEnd     = whole.meta.end;
+    winLimit   = whole.meta.limit;
+    winRecords = whole.stats.recordsIn;
+    winLastTs  = whole.stats.lastTsEvent;
+    st.rep.recordsAtLastTsEvent =
+        static_cast<std::size_t>(whole.stats.recordsAtLastTsEvent);
+    for (const auto& m : whole.meta.mappings) {
+      for (const auto& iv : m.intervals) {
+        std::uint32_t id = 0;
+        if (!parseExact(iv.symbol, id)) continue;  // not an id in this interval
+        st.mappings.push_back(csv::Transcoded::Mapping{
+            id, m.rawSymbol, iv.startDate,
+            iv.endDate > iv.startDate ? iv.endDate - 1 : iv.startDate});
+      }
+    }
+  }
+
+  // `lastTsEvent` is the delivered end only if ts_event never descends. The
+  // CSV path refuses a descent in the transcoder; a retained DBN is checked
+  // here, so `reload` refuses what `ingest` would have.
+  if (whole.stats.tsEventDescents != 0) {
+    return asFinding(arrow::Status::Invalid(
+        dbnPath, " has ", whole.stats.tsEventDescents,
+        " record(s) whose ts_event is below the previous record's. The "
+        "recorded window's exclusive end is the LAST record's ts_event, which "
+        "is the delivered end only in time order; refused rather than "
+        "published (docs §8.8)."));
+  }
+  // On `ingest` the CSV's count and last ts_event must be what the decoder
+  // saw in the retained DBN, or the two paths would read different inputs.
+  if (!opts.fromDbnOnly && !dbnJob &&
+      (winRecords != whole.stats.recordsIn || winLastTs != whole.stats.lastTsEvent)) {
+    return asFinding(arrow::Status::Invalid(
+        "the CSV for ", spec.kind, " has ", winRecords,
+        " record(s) ending at ts_event ", winLastTs, " but its retained DBN "
+        "decodes ", whole.stats.recordsIn, " ending at ",
+        whole.stats.lastTsEvent, "; `reload` would record a different window."));
+  }
+  {
+    const csv::DeliveredWindow w =
+        csv::deliveredWindow(winStart, winEnd, winLimit, winRecords, winLastTs);
+    st.rep.pullLimit        = winLimit;
+    st.rep.truncatedByLimit = w.truncatedByLimit;
+    st.rep.requestedFromNs  = static_cast<std::int64_t>(winStart);
+    st.rep.requestedToNs    = static_cast<std::int64_t>(winEnd);
+    st.rep.recordedFromNs   = static_cast<std::int64_t>(w.fromNs);
+    st.rep.recordedToNs     = static_cast<std::int64_t>(w.toNs);
+  }
+
+  if (st.rep.recordedToNs <= st.rep.recordedFromNs) {
+    return asFinding(arrow::Status::Invalid(
+        "the delivered window for ", spec.kind, " came out empty (",
+        formatWindow(st.rep.recordedFromNs, st.rep.recordedToNs),
+        "). Writing it as an ingested window would assert coverage of "
+        "nothing."));
+  }
+
+  // A ROW ON A DAY THE WINDOW DOES NOT CLAIM WOULD DROP THAT DAY'S PARTITION
+  // (ENC-1640). The load drops every partition its rows land in, so one row
+  // dated outside the recorded window's days empties a neighbouring day's
+  // partition — another window's data — and only state=3 would say so. That
+  // is what the vendor's start-of-day mbo snapshot did before it was
+  // excluded: ts_event on the previous day. Refused, before any write.
+  {
+    const auto windowDays = daysOf(st.rep.recordedFromNs, st.rep.recordedToNs);
+    std::size_t outside = 0;
+    std::int64_t firstOutside = 0;
+    const auto check = [&](std::int64_t ts) {
+      if (windowDays.count(csv::yyyymmddUtc(static_cast<std::uint64_t>(ts))) == 0) {
+        if (outside++ == 0) firstOutside = ts;
+      }
+    };
+    for (const auto& t : whole.ticks) check(t.header.tsEventNs);
+    for (const auto& b : whole.book) check(b.header.tsEventNs);
+    if (outside != 0) {
+      return asFinding(arrow::Status::Invalid(
+          dbnPath, ": ", outside, " ", spec.kind, " row(s) have a ts_event on "
+          "a day outside the recorded window ",
+          formatWindow(st.rep.recordedFromNs, st.rep.recordedToNs), " (first ",
+          formatNs(firstOutside), "). Loading them would DROP that day's "
+          "partition, which holds another window's rows. Nothing was written."));
+    }
+  }
+
+  st.decoded = std::move(whole);
+  return arrow::Status::OK();
+}
+
+// ---- preflight: the table holds every column the INSERT names ---------
+//
+// Before ANY write. An L1 created before a column was added (ENC-1494's
+// `book_events.aggressor`) refuses the INSERT, but only after the DROP
+// PARTITION below has emptied the day: measured, the job exited 2 with the
+// window at state=2 and book_events at 0 rows. Recoverable by reload, and
+// never reported complete, but it destroyed data it could have refused to
+// touch. `apply.py verify` names the drift; this makes the job say so first.
+arrow::Status preflight(const ch::Client& client, const std::string& kind,
+                        const std::string& table) {
+  std::string q = "SELECT ";
+  q += kind == "trades" ? kTradesColumns : kBookEventsColumns;
+  q += " FROM krn.";
+  q += table;
+  q += " LIMIT 0 FORMAT TabSeparated";
+  const auto probe = client.select(q);
+  if (!probe.ok()) {
+    return arrow::Status::Invalid(
+        "krn.", table, " does not hold every column this build inserts (",
+        kind == "trades" ? kTradesColumns : kBookEventsColumns,
+        "): ", probe.status().message(),
+        "\nNothing has been dropped or written. The table predates this "
+        "build's schema: `data/schema/apply.py verify` names the difference, "
+        "and the remedy is re-creating the table from clickhouse.sql and "
+        "reloading from the retained DBN (docs/data-layer.md §8.4).");
+  }
+  return arrow::Status::OK();
+}
+
+// Rows per INSERT statement. The whole day was one statement while a day was
+// 1000 rows; a delivered mbo day is millions, and one ~1 GB TSV body is a
+// second copy of the day in memory for no gain. Same rows, same order.
+constexpr std::size_t kInsertBatchRows = 1000000;
+
+// ---- pass 2 for ONE staged kind: drop, insert, record -------------------
+arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
+  // Day partitions this kind's rows land in, plus the recorded window's own
+  // days: a window may claim a day the rows do not reach (a quiet tail), and
+  // that day's partition is still being asserted over.
+  std::set<std::uint32_t> days = daysOf(st.rep.recordedFromNs, st.rep.recordedToNs);
+  for (const auto& t : st.decoded.ticks) {
+    days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(t.header.tsEventNs)));
+  }
+  for (const auto& b : st.decoded.book) {
+    days.insert(csv::yyyymmddUtc(static_cast<std::uint64_t>(b.header.tsEventNs)));
+  }
+
+  // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
+  //
+  // From the warning block in clickhouse.sql: a DROP PARTITION invalidates
+  // EVERY recorded window's completeness rows for that partition, not only
+  // the window being re-ingested, because partitions are day-granular while
+  // completeness is per (symbol, window). Without this step another window's
+  // newest row still reads state=1 over an emptied partition, and isComplete
+  // returns true over nothing.
+  //
+  // So before dropping: every recorded window of this kind intersecting a
+  // partition about to go gets a state=3 (invalidated) row, our own symbol's
+  // other windows included (ENC-1635). Only the window being written is
+  // left out; the state=0 below covers it. `invalidationTargets` decides.
+  for (const std::uint32_t day : days) {
+    const auto dayFrom = static_cast<std::int64_t>(csv::midnightUtcNs(day));
+    const std::int64_t dayTo = dayFrom + 86400000000000LL;
+    std::ostringstream q;
+    q << "SELECT DISTINCT symbol, toUnixTimestamp64Nano(from_ts), "
+         "toUnixTimestamp64Nano(to_ts) FROM krn.ingest_windows WHERE kind = "
+      << ch::sqlQuote(st.rep.kind)
+      << " AND from_ts < fromUnixTimestamp64Nano(toInt64(" << dayTo
+      << "), 'UTC') AND to_ts > fromUnixTimestamp64Nano(toInt64(" << dayFrom
+      << "), 'UTC') FORMAT TabSeparated";
+    ARROW_ASSIGN_OR_RAISE(const auto found, client.select(q.str()));
+    std::vector<RecordedWindow> intersecting;
+    intersecting.reserve(found.size());
+    for (const auto& r : found) {
+      // ⚠ CODE-REVIEW FINDING #6. This was `if (r.size() != 3) continue;` —
+      // a SILENT SKIP, inside the block whose entire stated purpose is
+      // preventing `isComplete` from returning true over an emptied
+      // partition. Skipping a row here means some window keeps a `state=1`
+      // row over data this loop is about to drop, which is the exact failure
+      // the block exists to prevent, reached by the code meant to prevent
+      // it. It refuses now.
+      if (r.size() != 3) {
+        return arrow::Status::Invalid(
+            "a krn.ingest_windows row came back with ", r.size(),
+            " field(s) instead of 3 while collecting the recorded windows "
+            "whose completeness this DROP PARTITION invalidates. Refusing "
+            "rather than skipping: a skipped row leaves a window asserting "
+            "state=1 over a partition about to be emptied. Nothing has been "
+            "dropped yet.");
+      }
+      RecordedWindow w;
+      w.symbol = r[0];
+      if (!parseExact(r[1], w.fromTsNs)) return badField("from_ts", r[1]);
+      if (!parseExact(r[2], w.toTsNs)) return badField("to_ts", r[2]);
+      intersecting.push_back(std::move(w));
+    }
+    for (const auto& w : invalidationTargets(intersecting, st.rep.symbol,
+                                             st.rep.recordedFromNs,
+                                             st.rep.recordedToNs)) {
+      ARROW_RETURN_NOT_OK(writeWindowRow(
+          client, w.symbol, st.rep.kind, w.fromTsNs, w.toTsNs,
+          /*state=*/3, /*rowsInserted=*/0, st.sessionId,
+          "invalidated by DROP PARTITION " + std::to_string(day) + " for " +
+              st.rep.symbol));
+      rep.invalidationRows.push_back(
+          w.symbol + "/" + st.rep.kind + " " + std::to_string(w.fromTsNs) +
+          ".." + std::to_string(w.toTsNs) + " -> state=3 (partition " +
+          std::to_string(day) + ")");
+    }
+  }
+
+  // ---- state=0, in flight --------------------------------------------
+  ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
+                                     st.rep.recordedFromNs, st.rep.recordedToNs,
+                                     /*state=*/0, /*rowsInserted=*/0,
+                                     st.sessionId, st.rep.jobId));
+
+  // ---- DROP PARTITION, then reload (D5) ------------------------------
+  for (const std::uint32_t day : days) {
+    std::ostringstream q;
+    q << "ALTER TABLE krn." << st.table << " DROP PARTITION " << day;
+    ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
+    rep.partitionsDropped.push_back(st.table + ":" + std::to_string(day));
+  }
+
+  // ---- sort by the physical sort key, then insert ---------------------
+  //
+  // docs 8.6: "Insert symbol-sorted batches per day partition — the key leads
+  // with symbol, so raw DBN file order (time-ordered) forces a per-part
+  // re-sort. The ingest job owns this; a background merge cannot fix it after
+  // the fact." At one symbol and one day this sort is the identity, which is
+  // exactly why it goes in now: getting it wrong is invisible here and
+  // expensive at the universe.
+  //
+  // One symbol, so the symbol leg of (symbol, ts_event, provider_seq) is
+  // constant and `stable_sort` on the remaining two is the same order — with
+  // ties left in arrival order, which matters because the key is NOT unique.
+  // Sorted as indices and rendered per batch, so the rendered day is never
+  // held whole.
+  const bool trades = st.rep.kind == "trades";
+  const std::size_t nRows = trades ? st.decoded.ticks.size() : st.decoded.book.size();
+  const auto headerOf = [&](std::size_t i) -> const RecordHeader& {
+    return trades ? st.decoded.ticks[i].header : st.decoded.book[i].header;
+  };
+  std::vector<std::size_t> order(nRows);
+  for (std::size_t i = 0; i < nRows; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+    const auto& ha = headerOf(a);
+    const auto& hb = headerOf(b);
+    return ha.tsEventNs != hb.tsEventNs ? ha.tsEventNs < hb.tsEventNs
+                                        : ha.providerSeq < hb.providerSeq;
+  });
+
+  std::size_t inserted = 0;
+  for (std::size_t begin = 0; begin < nRows; begin += kInsertBatchRows) {
+    const std::size_t end = std::min(nRows, begin + kInsertBatchRows);
     std::string body = "INSERT INTO krn.";
     body += st.table;
     body += " (";
-    body += st.rep.kind == "trades" ? kTradesColumns : kBookEventsColumns;
+    body += trades ? kTradesColumns : kBookEventsColumns;
     body += ") FORMAT TabSeparated\n";
-    for (const auto& r : rows) body += r.text;
-
-    const arrow::Status ins =
-        rows.empty() ? arrow::Status::OK() : client.exec(body).status();
+    for (std::size_t k = begin; k < end; ++k) {
+      const std::size_t i = order[k];
+      body += trades
+                  ? renderTradeRow(st.decoded.ticks[i], st.decoded.symbol, st.decoded.venue)
+                  : renderBookRow(st.decoded.book[i], st.decoded.symbol, st.decoded.venue);
+    }
+    const arrow::Status ins = client.exec(body).status();
     if (!ins.ok()) {
       // state=2, failed. Written before returning so the window never reads as
       // anything but unloaded: the state=0 row above is already the newest, and
@@ -1051,36 +1419,111 @@ arrow::Result<Report> run(const Options& opts) {
           st.rep.recordedToNs, /*state=*/2, 0, st.sessionId, st.rep.jobId));
       return ins;
     }
-    st.rep.rowsInserted = rows.size();
+    inserted = end;
+  }
+  st.rep.rowsInserted = inserted;
 
-    // ---- symbology (SPEC D7, docs 8.9) ---------------------------------
-    for (const auto& m : st.mappings) {
-      const std::uint64_t validFrom = csv::midnightUtcNs(m.firstDay);
-      // HALF-OPEN [valid_from, valid_to): valid_to is midnight of the day AFTER
-      // the last day the mapping was observed on.
-      const std::uint64_t validTo =
-          csv::midnightUtcNs(m.lastDay) + 86400000000000ULL;
-      std::ostringstream q;
-      // `dataset` and `raw_symbol` come out of the vendor DBN's own metadata,
-      // and `source_ref` is either a vendor job id or a filesystem path — all
-      // three are quoted rather than concatenated (finding #5).
-      q << "INSERT INTO krn.symbology (dataset, instrument_id, raw_symbol, "
-           "valid_from, valid_to, source_ref, ingested_at) SELECT "
-        << ch::sqlQuote(st.dataset) << ", " << m.instrumentId << ", "
-        << ch::sqlQuote(m.rawSymbol) << ", fromUnixTimestamp64Nano(toInt64("
-        << validFrom << "), 'UTC'), fromUnixTimestamp64Nano(toInt64(" << validTo
-        << "), 'UTC'), "
-        << ch::sqlQuote(st.rep.jobId.empty() ? st.rep.dbnPath : st.rep.jobId)
-        << ", now64(3)";
-      ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
-      ++rep.symbologyRows;
+  // ---- symbology (SPEC D7, docs 8.9) ---------------------------------
+  for (const auto& m : st.mappings) {
+    const std::uint64_t validFrom = csv::midnightUtcNs(m.firstDay);
+    // HALF-OPEN [valid_from, valid_to): valid_to is midnight of the day AFTER
+    // the last day the mapping was observed on.
+    const std::uint64_t validTo =
+        csv::midnightUtcNs(m.lastDay) + 86400000000000ULL;
+    std::ostringstream q;
+    // `dataset` and `raw_symbol` come out of the vendor DBN's own metadata,
+    // and `source_ref` is either a vendor job id or a filesystem path — all
+    // three are quoted rather than concatenated (finding #5).
+    q << "INSERT INTO krn.symbology (dataset, instrument_id, raw_symbol, "
+         "valid_from, valid_to, source_ref, ingested_at) SELECT "
+      << ch::sqlQuote(st.dataset) << ", " << m.instrumentId << ", "
+      << ch::sqlQuote(m.rawSymbol) << ", fromUnixTimestamp64Nano(toInt64("
+      << validFrom << "), 'UTC'), fromUnixTimestamp64Nano(toInt64(" << validTo
+      << "), 'UTC'), "
+      << ch::sqlQuote(st.rep.jobId.empty() ? st.rep.dbnPath : st.rep.jobId)
+      << ", now64(3)";
+    ARROW_RETURN_NOT_OK(client.exec(q.str()).status());
+    ++rep.symbologyRows;
+  }
+
+  // ---- state=1, complete ---------------------------------------------
+  ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
+                                     st.rep.recordedFromNs, st.rep.recordedToNs,
+                                     /*state=*/1, inserted, st.sessionId,
+                                     st.rep.jobId));
+  return arrow::Status::OK();
+}
+
+}  // namespace
+
+arrow::Result<Report> run(const Options& opts) {
+  Report rep;
+  rep.sessionIdRuling = kSessionIdRuling;
+  rep.gapsNote        = kGapsNote;
+  ARROW_ASSIGN_OR_RAISE(rep.target, ch::resolveTarget(opts.url));
+  const ch::Client client(rep.target);
+
+  // ---- a delivered vendor DBN job (ENC-1640) -----------------------------
+  //
+  // ONE DAY AT A TIME: stage it (the same raw half as below), load it (the
+  // same drop/insert/record), then the next. Staging the whole job first, as
+  // the two-kind path does, would hold a month of mbo in memory. The cost is
+  // that a bad day 20 is found after days 1-19 are loaded; each of those is a
+  // complete, independently recorded window, so nothing is claimed that is
+  // not there, and a re-run reloads them exactly (D5).
+  if (!opts.dbnJobDir.empty()) {
+    if (!opts.scratchDir.empty()) {
+      std::error_code ec;
+      std::filesystem::create_directories(expandTilde(opts.scratchDir), ec);
+      if (ec) {
+        return arrow::Status::IOError("cannot create the scratch directory ",
+                                      opts.scratchDir, ": ", ec.message());
+      }
     }
+    if (opts.scratchDir.empty()) {
+      return arrow::Status::Invalid(
+          "a DBN job needs a scratch directory (--scratch) to decompress each "
+          ".dbn.zst into; the delivered files are never written.");
+    }
+    ARROW_ASSIGN_OR_RAISE(const DbnJobPlan plan, planDbnJob(opts.dbnJobDir, opts.days));
+    const KindSpec& spec = plan.dbnSchema == "mbo" ? kSpecs[1] : kSpecs[0];
+    if (!opts.noInsert) ARROW_RETURN_NOT_OK(preflight(client, spec.kind, spec.table));
+    for (const auto& day : plan.days) {
+      Staged st;
+      ARROW_RETURN_NOT_OK(stageOne(opts, "", spec, &plan, &day, st));
+      if (!opts.noInsert) ARROW_RETURN_NOT_OK(loadOne(client, st, rep));
+      rep.kinds.push_back(st.rep);
+    }
+    return rep;
+  }
 
-    // ---- state=1, complete ---------------------------------------------
-    ARROW_RETURN_NOT_OK(writeWindowRow(client, st.rep.symbol, st.rep.kind,
-                                       st.rep.recordedFromNs, st.rep.recordedToNs,
-                                       /*state=*/1, rows.size(), st.sessionId,
-                                       st.rep.jobId));
+  const std::string root = expandTilde(opts.dataRoot);
+
+  // ---- pass 1: the raw half (transcode, retain, decode, round-trip) ------
+  //
+  // Every file becomes canonical rows BEFORE anything is dropped or inserted. A
+  // DROP PARTITION followed by a decode failure would leave the partition empty
+  // with nothing but a state=0 able to say so; doing the whole raw half first
+  // means a bad file is refused with L1 untouched.
+  std::vector<Staged> staged;
+  for (const auto& spec : kSpecs) {
+    Staged st;
+    ARROW_RETURN_NOT_OK(stageOne(opts, root, spec, nullptr, nullptr, st));
+    staged.push_back(std::move(st));
+  }
+
+  if (opts.noInsert) {
+    for (const auto& st : staged) rep.kinds.push_back(st.rep);
+    return rep;
+  }
+
+  for (const auto& st : staged) {
+    ARROW_RETURN_NOT_OK(preflight(client, st.rep.kind, st.table));
+  }
+
+  // ---- pass 2: drop, insert, record -------------------------------------
+  for (auto& st : staged) {
+    ARROW_RETURN_NOT_OK(loadOne(client, st, rep));
     rep.kinds.push_back(st.rep);
   }
 

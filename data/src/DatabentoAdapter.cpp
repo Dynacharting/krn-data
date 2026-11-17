@@ -673,7 +673,21 @@ arrow::Result<RecordHeader> DatabentoAdapter::makeHeader(const dbn::RecordHeader
   h.sessionId     = cfg_.sessionId;
   h.venueId       = venueId_;
   h.instrumentId  = hd.instrumentId;
-  ARROW_ASSIGN_OR_RAISE(h.symbolId, resolveSymbol(hd.instrumentId, h.tsEventNs));
+  // SYMBOLOGY IS RESOLVED ON THE RECORD'S INDEX TIMESTAMP, ts_recv, AND NOT ON
+  // ts_event (ENC-1640). The vendor's own rule: a DBN mapping interval is a
+  // date range of the record's `index_ts`, which is `ts_recv` for mbo and
+  // trades (databento-cpp's `TsSymbolMap::At(record)` floors
+  // `record.IndexTs()`). The two dates differ only around midnight, and the
+  // case that forced this is real: every delivered XNAS.ITCH mbo day file
+  // opens with a start-of-day book snapshot (`F_SNAPSHOT`) whose ts_recv is
+  // that day's midnight and whose ts_event is the resting order's original
+  // time, as early as the previous day's 08:00 UTC. The file's one interval
+  // is [that day, next day), so keying on ts_event refused 4116 records of
+  // the 2026-10-27 NVDA file as "no symbology window covering 20261026".
+  // ts_event stays the only time an operator keys off (SPEC D9); this is a
+  // lookup of a label. An undefined ts_recv falls back to ts_event.
+  const std::int64_t indexTs = h.tsRecvNs != 0 ? h.tsRecvNs : h.tsEventNs;
+  ARROW_ASSIGN_OR_RAISE(h.symbolId, resolveSymbol(hd.instrumentId, indexTs));
   return h;
 }
 
