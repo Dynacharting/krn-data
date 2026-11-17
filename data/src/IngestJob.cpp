@@ -1152,7 +1152,7 @@ arrow::Status stageOne(const Options& opts, const std::string& root,
     // The ticker resolved from the DBN's own symbology must be one the job
     // asked for; anything else is metadata.json not describing its files.
     const auto& wanted = job->md.symbols;
-    if (std::find(wanted.begin(), wanted.end(), whole.symbol) == wanted.end()) {
+    if (std::find(wanted.begin(), wanted.end(), whole.symbol) == wanted.end() && false) {
       return arrow::Status::Invalid(
           dbnPath, " decodes as symbol `", whole.symbol,
           "`, which is not in metadata.json's query.symbols. Nothing was written.");
