@@ -594,7 +594,8 @@ the instant the snapshot is **as of** (the records' `ts_recv`, the day's midnigh
 the recorded window's start), so the rows sit in the partition of the day they seed: a
 re-ingest of that day drops and reloads them (§8.6) and touches no other day. Seeding is
 replaying these rows in `(ts_event, provider_seq)` order, Clear first; the job refuses a
-snapshot whose Clear does not sort first, or that is not one opening block at one instant.
+snapshot whose Clear does not sort first, that is not one opening block at one instant, or
+whose as-of instant is not exactly the window's start.
 
 Measured from L1 alone: seeded from `book_snapshots`, NVDA 2026-10-27's 7,010,872
 `book_events` rows meet **0** unknown `order_id`s; from an empty book they meet **4115**
@@ -605,8 +606,10 @@ window over the same `[from_ts, to_ts)`, written `state = 1` after its rows and 
 day's `book_events` window, and both kinds are invalidated together when a day is dropped.
 On a delivered day the job also refuses to record the window if any Cancel or Modify names an
 order that neither the snapshot nor the day's own Adds introduced. The NVDA job's Mondays
-carry no snapshot (they open with an unflagged Clear); they pass that check on their own and
-get no `book_snapshots` window. The cadence snapshot above is still not built.
+carry no snapshot; a day without one must open with an unflagged Clear (theirs is record 0,
+sequence 0), pass that check on its own, and gets no `book_snapshots` window. The gates are
+`splitSnapshot`, `checkSnapshotAsOf` and `checkDeliveredBookDay` (`IngestJob.hpp`), each
+refusal tested in `data/tests/IngestSnapshotTest.cpp`. The cadence snapshot above is still not built.
 
 ### 8.6 Engine and re-ingest — plain `MergeTree`, drop-partition reload
 
