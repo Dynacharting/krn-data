@@ -27,6 +27,7 @@ The fetched engine needs RapidJSON and Boost; with no system package, pass
 |---|---|---|
 | `KRN_DATA_BUILD_TESTS` | `ON` | fetch googletest; register `krn_data_tests`, `krn_schema_no_compute` and its selftest with ctest |
 | `KRN_DATA_SAMPLE_DIR` | `~/market-data/databento/XNAS.ITCH/MSFT/20220610` | the retained T5 sample DBN files `GapsRealSample` reads (ENC-1506); a missing file fails that case, never skips it |
+| `KRN_DATA_NVDA_TRADES_JOB` | `~/market-data/databento/XNAS.ITCH/NVDA/trades-dbn-XNAS-20261117-R7EH4L6T8P` | the delivered vendor DBN trades job `IngestDbnJobTest` decodes one day of (ENC-1640); a missing job fails that case, never skips it |
 | `KRN_DATA_BUILD_BENCHMARKS` | `OFF` | build `krn_b2_bench` (ENC-1487, B2 rows/sec per step) and `krn_b1_transport` (ENC-1485, B1; fetches clickhouse-cpp v2.6.2, which uses Arrow's lz4); never ctest cases |
 
 B2: configure `-DCMAKE_BUILD_TYPE=Release -DKRN_DATA_BUILD_BENCHMARKS=ON`, then
