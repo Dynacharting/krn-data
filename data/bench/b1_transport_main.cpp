@@ -605,7 +605,17 @@ struct Cell {
   std::string table, transport, cache, label;
   std::size_t block = 0;
   std::vector<Sample> samples;
+  std::string load;    // /proc/loadavg 1/5/15 at the end of the cell (ENC-1662)
 };
+
+// The machine is shared (D13), so every row carries the load it was taken
+// under: a number without it cannot be told apart from a contended one.
+std::string loadAvg() {
+  std::ifstream f("/proc/loadavg");
+  std::string a, b, c;
+  if (!(f >> a >> b >> c)) return "?";
+  return a + " " + b + " " + c;
+}
 
 std::string fmtRate(double v) {
   std::ostringstream o;
@@ -618,8 +628,8 @@ std::string fmtRate(double v) {
 void printTable(const std::vector<Cell>& cells) {
   std::cout << "\n| table | cache | block | transport | blocks/query | rows/s median"
                " | rows/s p10–p90 | µs/query median | wire bytes/query | wire MB/s median"
-               " | allocs/query | allocs/block |\n"
-               "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+               " | allocs/query | allocs/block | loadavg (end of cell) |\n"
+               "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n";
   for (const auto& c : cells) {
     std::vector<double> rps, us, mbps, allocs;
     for (const auto& s : c.samples) {
@@ -638,7 +648,7 @@ void printTable(const std::vector<Cell>& cells) {
               << "| " << std::fixed << std::setprecision(0) << pct(us, 0.5) << " | "
               << s0.recvBytes << " | " << std::setprecision(1) << pct(mbps, 0.5) << " | "
               << std::setprecision(0) << medAllocs << " | " << std::setprecision(1)
-              << medAllocs / static_cast<double>(s0.blocks) << " |\n";
+              << medAllocs / static_cast<double>(s0.blocks) << " | " << c.load << " |\n";
   }
 }
 
@@ -789,6 +799,7 @@ int run(int argc, char** argv) {
                          << s.ns << "," << s.rows << "," << s.blocks << "," << s.recvBytes
                          << "," << s.allocs << "\n";
           }
+          c.load = loadAvg();
           if (c.samples.empty()) throw CouldNotRun("zero iterations for a cell");
           for (const auto& s : c.samples)
             if (s.rows != c.samples.front().rows || s.rows == 0)
