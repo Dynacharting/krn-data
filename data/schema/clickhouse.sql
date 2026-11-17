@@ -346,15 +346,34 @@ SETTINGS index_granularity = 8192;
 -- OrderBookManager is the single implementation of applying deltas either way,
 -- so nothing here computes a value a second time.
 --
--- Cadence — session open plus a fixed event-time interval — is settled in
--- principle and tuned against B3 (docs §8.5). It trades storage against replay
--- seek cost and is a parameter of the ingest job, not of this schema.
+-- ONE ROW PER ORDER, NOT A NESTED ARRAY OF LEVELS (ENC-1663). Revision 1 held a
+-- snapshot as one row of aggregated levels (side, price, size, order_count).
+-- Nothing ever wrote it, and it cannot seed an MBO book: every Cancel and
+-- Modify in book_events names an order_id, and a level total carries none, so
+-- a book seeded from it meets an unknown order on the first overnight cancel.
+-- The first snapshot L1 holds is the VENDOR'S: every delivered XNAS.ITCH mbo
+-- day file opens with a Clear and one Add per order resting at midnight, all
+-- flagged F_SNAPSHOT. Each of those records is one row here, the Clear first
+-- (it carries the epoch the day's book_events run in), so seeding a book is
+-- replaying these rows through onReset / onAdd in (ts_event, provider_seq)
+-- order. The Clear's provider_seq is below every Add's; the ingest job refuses
+-- a snapshot for which that does not hold, because the sort key would then
+-- replay it out of order.
 --
--- Levels are nested rather than one row per level so a snapshot is one row and
--- therefore atomic: a half-written snapshot that reads as complete would seed a
--- torn book, which is worse than no snapshot at all. ClickHouse flattens a
--- Nested column into parallel arrays (levels.side, levels.price, …) and applies
--- the column's CODEC to each of them.
+-- `ts_event` IS THE INSTANT THE SNAPSHOT IS AS OF, not the order's own time.
+-- For the vendor snapshot that is the records' ts_recv, the day's midnight,
+-- which is the recorded window's start. Keyed that way the row sits in the
+-- partition of the day it seeds, so the §8.6 DROP PARTITION + reload of a day
+-- replaces that day's snapshot and no other's. The order's original ts_event,
+-- as early as the previous day's 08:00 UTC, is `order_ts`; partitioning on it
+-- would put the snapshot in the previous day's partition, which a load of
+-- this day would then drop.
+--
+-- Atomicity is the completeness ledger's job, as on every other table: the
+-- revision-1 argument for one row per snapshot ("a half-written snapshot that
+-- reads as complete seeds a torn book") is answered by krn.ingest_windows. The
+-- job records a `book_snapshots` window state = 1 only after every row is in,
+-- and the same day's `book_events` window state = 1 only after that (D11).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS krn.book_snapshots
 (
@@ -366,20 +385,24 @@ CREATE TABLE IF NOT EXISTS krn.book_snapshots
     instrument_id UInt32                CODEC(T64, ZSTD(1)),
     venue         LowCardinality(String),
 
+    -- The order's own ts_event (the Clear's, on the Clear row).
+    order_ts      DateTime64(9, 'UTC')  CODEC(Delta(8), ZSTD(1)),
+    -- krn::data::BookAction: 5 (clear) on the first row, 0 (add) on the rest.
+    action        UInt8                 CODEC(ZSTD(1)),
+    -- krn::data::Side, the resting side: 0 Bid, 1 Ask, 2 None (the Clear)
+    side          UInt8                 CODEC(ZSTD(1)),
+    price         Int64                 CODEC(Delta(8), ZSTD(3)),
+    size          UInt64                CODEC(T64, ZSTD(1)),
+    order_id      UInt64                CODEC(Delta(8), ZSTD(1)),
+    -- Order::priority, as on book_events: the record's sequence.
+    priority      UInt64                CODEC(Delta(8), ZSTD(1)),
     epoch         UInt32                CODEC(DoubleDelta, ZSTD(1)),
-    -- Parallel arrays (ClickHouse Nested). Ordered best -> worst within a
-    -- side, matching DepthSnapshot's bids/asks ordering.
-    levels       Nested(
-        side        UInt8,
-        price       Int64,
-        size        UInt64,
-        order_count UInt32
-    ) CODEC(ZSTD(3))
+    flags         UInt16                CODEC(ZSTD(1))
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts_event)
 ORDER BY (symbol, ts_event, provider_seq)
-SETTINGS index_granularity = 1024;   -- snapshots are wide and rare
+SETTINGS index_granularity = 1024;   -- a day's snapshot is thousands of rows
 
 -- ---------------------------------------------------------------------------
 -- symbology — SYMBOL IDENTITY OVER TIME (SPEC D7, docs §8.9)
