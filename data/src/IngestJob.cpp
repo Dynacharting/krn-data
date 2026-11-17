@@ -317,7 +317,7 @@ std::string renderBookRow(const BookRecord& b, const std::string& symbol,
 std::string renderSnapshotRow(const BookRecord& b, std::int64_t asOfNs,
                               const std::string& symbol, const std::string& venue) {
   std::ostringstream os;
-  os << asOfNs << '\t' << b.header.tsRecvNs << '\t' << b.header.providerSeq << '\t'
+  os << b.header.tsEventNs << '\t' << b.header.tsRecvNs << '\t' << b.header.providerSeq << '\t'
      << b.header.sessionId << '\t' << ch::tsvEscape(symbol) << '\t'
      << b.header.instrumentId << '\t' << ch::tsvEscape(venue) << '\t'
      << b.header.tsEventNs << '\t' << static_cast<unsigned>(b.action) << '\t'
