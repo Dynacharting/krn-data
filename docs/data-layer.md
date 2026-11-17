@@ -1156,7 +1156,8 @@ scroll-back (§10). Parquet and DuckDB **entirely** (C10, §15).
 ## 14. Measurement first
 
 **Nothing in §6 or §5.2 is chosen without these.** B1's apparatus exists and has been run on
-the T5 sample (§14.3); B2's is ENC-1487's `krn_b2_bench`. Neither settles anything yet.
+the T5 sample (§14.3) and on the NVDA month (§14.4, which settles §5.2 as native); B2's is
+ENC-1487's `krn_b2_bench`.
 
 | id | measures | notes |
 |---|---|---|
@@ -1256,6 +1257,29 @@ What this sample shows, and only for it:
   per-query fixed cost × 1000, not a streaming rate and not a ceiling for a long scan.
 
 A transport choice, and any `B2 ≥ B1` comparison, waits for a sample spanning many granules.
+
+### 14.4 B1 on the NVDA month — ENC-1662, 2026-11-17
+
+**Settles §5.2: native.** The data is the delivered NVDA `XNAS.ITCH` jobs:
+
+- trades: 9.92 M rows, 23 windows, 2026-10-19 to 2026-11-16;
+- mbo: 304.0 M book events, 23 windows, 2026-10-16 to 2026-11-14.
+
+Over day, week and month ranges, native's median beats HTTP `ArrowStream` in every cell. In
+the 100 tabulated cells the margin is 1.8–2.5× rows/s, and the p10–p90 bands are disjoint.
+That set uses a re-take of trades 2026-11-02. Its first take, which passed the load gate, had
+three overlapping cold cells, the lowest at 1.15×.
+
+- The server spends more CPU on the HTTP/Arrow path than on native, and that accounts for most
+  of the gap. Measured in `system.query_log` on the heaviest MBO day: the user-CPU difference
+  is about 70 % of the query-duration difference. Client CPU was not measured.
+- Block size stops helping at `index_granularity` = 8192.
+- Compact parts (< 10 MB) deliver one granule per block whatever `max_block_size` says. That is
+  why §14.3's sweep collapsed.
+
+The B1 ceiling, native and warm, is 13–19 M rows/s for trades and about 12.8 M rows/s for
+mbo, which means 2.35 s for the heaviest day (30.2 M rows). That is the B1 half of `B2 ≥ B1`.
+Tables, exact commands and load: `data/bench/b1_nvda_results.md`.
 
 ---
 

@@ -9,15 +9,33 @@ keep-alive added in this ticket. Earlier B1 rows (MSFT T5 sample, 1000 rows) are
 ## Verdict
 
 **Use the native protocol.** On every range, cache state and block size, native is
-**1.8–2.5× the rows/s of HTTP `FORMAT ArrowStream`**. Across 100 cells the two arms' p10–p90
-bands never overlap. On the 1000-row sample the two arms were within noise. At this volume they
-are not.
+**1.8–2.5× the rows/s of HTTP `FORMAT ArrowStream`** in the tabulated set. In those 100 cells
+the two arms' p10–p90 bands never overlap. On the 1000-row sample the two arms were within
+noise. At this volume they are not.
 
-- **The gap is on the server.** `system.query_log` on the heaviest MBO day (2026-11-05,
-  30.2 M rows, block 8192) gives a server-side duration of 2393 ms native vs 5236 ms HTTP, and
-  server user CPU of 2525 ms vs 4474 ms. Both match the client wall times (2.37 s vs 5.17 s).
-  The time goes into ClickHouse's single-threaded (`max_threads=1`) Arrow serialisation, not
-  into the client's `StreamDecoder`.
+That "never overlap" holds because trades 2026-11-02 was re-taken, as explained under *Timing
+hygiene*. In the first take of that day, three cold cells overlap: block 256, 8192 and 65536.
+Cold 65536 is only 1.15× there. Across both takes, native's median won every cell, and no warm
+cell overlapped.
+
+- **The server spends more CPU on the HTTP/Arrow path, and that accounts for most of the
+  gap.** These are `system.query_log` medians for the heaviest MBO day (2026-11-05, 30.2 M
+  rows, block 8192). Each median is over about 11 queries per arm, and those mix the warm-up,
+  cold, warm and checksum queries, so read them as indicative only.
+
+  | measure | native | HTTP | gap |
+  |---|---:|---:|---:|
+  | client wall time | 2.37 s | 5.17 s | |
+  | server query duration | 2393 ms | 5236 ms | 2.84 s |
+  | server user CPU | 2525 ms | 4474 ms | 1.95 s |
+
+  - The user-CPU gap is about 70 % of the duration gap.
+  - The query duration also includes time the server spent blocked on the socket. On its own,
+    it cannot separate server encoding from client back-pressure.
+  - Native user CPU exceeds the native duration, so the server's work is not confined to one
+    thread even at `max_threads=1`.
+  - Client CPU was not measured. That the remaining ~30 % sits on the client side (the HTTP
+    parser and `StreamDecoder`) is **inferred, not shown**.
 - **Wire volume.** HTTP sends 1.25–1.38× more bytes for the same rows: 2.90 GB vs 2.33 GB on
   the heaviest MBO day.
 - **Allocations.** Native makes more allocations per block: about 143–160 for clickhouse-cpp
@@ -30,8 +48,11 @@ are not.
   MergeTree part under `min_bytes_for_wide_part` (10 MB uncompressed) is Compact, and a Compact
   part is read one granule (≤ 8192 rows) per block whatever `max_block_size` says. The NVDA
   trades days 10-27, 10-29 and 11-03 are Compact parts and deliver 19–23 blocks at every
-  requested size. 11-02, 11-05 and every MBO day are Wide and follow the request. The T5 sample
-  was 1000-row Compact parts, hence one block per query at every size.
+  requested size. 11-02 and 11-05 are Wide and follow the request. The MBO days are Wide
+  except for one 10,872-row Compact tail part on 10-27. That is why mbo 10-27 delivers 109,376
+  blocks at block size 64: 109,375 from the 7,000,000 Wide rows, plus 1 for the Compact tail,
+  where 7,010,872 / 64 rows would give 109,545. The T5 sample was 1000-row Compact parts, hence
+  one block per query at every size.
 
 ## The B1 half of `B2 ≥ B1`, by day
 
@@ -75,7 +96,7 @@ crosses the transport in **2.35 s** (native, warm). That is 2.4 s; HTTP takes 5.
 | trades warm, native / HTTP | 906 k / 888 k rows/s | 13.3–19.4 M / 6.1–7.7 M rows/s |
 | book_events warm, native / HTTP | 861 k / 823 k rows/s | 12.8–13.0 M / 5.8–6.3 M rows/s |
 | what the figure measures | per-query fixed cost: ~1.1 ms per 1000 rows | a streaming rate: 12 ms (one trades day) to 2.35 s (heaviest MBO day) per query |
-| native vs HTTP | inside each other's p10–p90 in every cell | **1.8–2.5×**, bands disjoint in all 100 cells |
+| native vs HTTP | inside each other's p10–p90 in every cell | **1.8–2.5×**, bands disjoint in all 100 tabulated cells (3 cold cells overlapped in the replaced first take of trades 11-02; native's median won every cell in both takes) |
 | blocks per query | 1 at every requested size (Compact parts) | follows the request on Wide parts and stops at 8192; one per granule on Compact parts |
 | HTTP extra wire bytes | +23–27 % | +25–38 % |
 | allocs/block, native / HTTP | 288–309 / 123–139 | 143–160 / 53–105 |
@@ -164,10 +185,22 @@ for both schemas. 10-27 and 10-29 were added because they are ENC-1641's B2 days
 overlapped B2 or another locked heavy job. Inside the lock it waited for 1-min loadavg < 3.0
 and zero running merges, and released the lock to retry if that did not happen. Every cell
 records the 1-min loadavg at its end. Across all final cells it ranged from **1.27 to 3.63**,
-and that figure includes this benchmark's own server and client threads. trades-day-1102 was
-first taken while the 5/15-min averages were still 7–10 from an earlier burst, and its cold
-bands were wide. It was re-taken at 1.6–2.0, and the re-take is the row below. Both CSVs are in
-the evidence directory. Unlocked work from other sessions (desktop apps, unrelated builds) was
+and that figure includes this benchmark's own server and client threads.
+
+**The trades 2026-11-02 re-take.** The first take of this day **passed the stated gate**: the
+1-min load was 2.97 < 3.0 at its start. It was replaced afterwards because the 5/15-min
+averages were still 9.4 and 10.1 from an earlier burst, and its cold bands were wide. The
+re-take ran at a 1-min load of 1.6–2.0, and it is the row tabulated below.
+
+| | first take (replaced) | re-take (tabulated) |
+|---|---|---|
+| warm cells | 2.13–2.22×, no overlap | 2.11–2.25×, no overlap |
+| cold cells | 1.15–1.96×; 3 of 5 overlap (block 256, 8192, 65536); cold 65536 only 1.15× | 1.81–2.24×, no overlap |
+
+The replacement is a choice made after seeing the data, and it is the only one. Every claim of
+"no overlap in all 100 cells" depends on it. Native's median won every cell in both takes. Both
+takes' CSVs and tables are in the evidence directory: `runs/final/` holds the first take and
+`runs/rerun-1102/` the re-take. Unlocked work from other sessions (desktop apps, unrelated builds) was
 not excluded: the gate only bounds it.
 
 **HTTP keep-alive.** ClickHouse closes a keep-alive connection that has been idle past
@@ -188,7 +221,7 @@ Evidence, outside every git tree:
 - `runs/final/*.{txt,csv}`
 - `runs/rerun-1102/`
 - `runs/combined/`, the set tabulated here
-- `server-side-split.txt`
+- `server-side-split.txt` (medians mixing warm-up, cold, warm and checksum queries; see *Verdict*)
 - `parts.tsv`
 - `b1_nvda*.sh`, the gated driver
 - `summarize.py`, which builds this table from the CSVs
