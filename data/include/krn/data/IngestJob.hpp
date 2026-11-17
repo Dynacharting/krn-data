@@ -85,7 +85,62 @@ struct Options {
   // Normally a no-op; the flag exists so a deliberate re-encode after an
   // encoder change is not indistinguishable from the idempotent case.
   bool forceReencode = false;
+
+  // ---- ENC-1640: a DELIVERED VENDOR DBN JOB ------------------------------
+  //
+  // Non-empty selects the mode: `dbnJobDir` is one vendor batch job as
+  // delivered (`metadata.json`, `manifest.json`, `condition.json` and one
+  // `xnas-itch-YYYYMMDD.<schema>.dbn.zst` per UTC day). Each day file is one
+  // window, ingested and loaded before the next is read, so a month of mbo is
+  // never held in memory at once. The delivered `.dbn.zst` IS the D6 retained
+  // file: it is read, never written. It is decompressed into `scratchDir`
+  // (required) because the adapter refuses a zstd frame by name, and the
+  // decompressed copy is deleted once the day is decoded. `days` limits the
+  // run to those yyyymmdd day files; empty means every one in the job.
+  std::string dbnJobDir;
+  std::string scratchDir;
+  std::vector<std::uint32_t> days;
 };
+
+// ---------------------------------------------------------------------------
+// One day file of a delivered DBN job, and its window (ENC-1640).
+// ---------------------------------------------------------------------------
+struct DbnJobDay {
+  std::uint32_t day = 0;     // yyyymmdd from the file name
+  std::string   path;        // the delivered .dbn.zst
+  std::uint64_t bytes = 0;   // its size on disk, checked against manifest.json
+  std::string   condition;   // condition.json's word for the day
+  // [fromNs, toNs) = that UTC day ∩ [query.start, query.end). Half-open.
+  std::int64_t  fromNs = 0;
+  std::int64_t  toNs   = 0;
+};
+
+struct DbnJobPlan {
+  csv::PullMetadata md;
+  std::string kind;       // 'trades' | 'book_events'
+  std::string dbnSchema;  // 'trades' | 'mbo'
+  std::vector<DbnJobDay> days;
+};
+
+// Reads and checks the job directory without decoding anything. Every refusal
+// here is COULD-NOT-RUN (exit 2): no metadata.json, `encoding != dbn`,
+// `compression != zstd`, `split_duration != day`, a schema this job has no
+// table for, a day file whose schema segment is not `query.schema`, a manifest
+// for another job_id or disagreeing on a file's size, a day outside the query,
+// or a requested day with no file.
+arrow::Result<DbnJobPlan> planDbnJob(const std::string& dir,
+                                     const std::vector<std::uint32_t>& onlyDays);
+
+// The UTC day ∩ [queryStart, queryEnd), half-open. Empty (to <= from) when
+// they do not meet.
+std::pair<std::int64_t, std::int64_t> dayWindow(std::uint32_t yyyymmdd,
+                                                std::uint64_t queryStart,
+                                                std::uint64_t queryEnd);
+
+// Streams one zstd file (one or more frames) into `outPath` through Arrow's
+// ZSTD codec. A truncated final frame is refused. Returns the bytes written.
+arrow::Result<std::uint64_t> decompressZstdFile(const std::string& inPath,
+                                                const std::string& outPath);
 
 // ---------------------------------------------------------------------------
 // What one kind's ingest produced.
@@ -148,6 +203,17 @@ struct KindReport {
   std::size_t gapRowsWritten     = 0;
   std::size_t gapMaybeBadBook    = 0;
   std::string gapRefusal;
+
+  // ENC-1640. `dbnPath` is the retained file; on a DBN job that is the
+  // delivered .dbn.zst and `dbnBytes` its compressed size, while
+  // `decompressedBytes` is what the adapter decoded.
+  std::uint64_t decompressedBytes = 0;
+  std::string   dbnVersionNote;   // "DBN v1" etc., from the decoded metadata
+  std::string   condition;        // condition.json, DBN job only
+  // mbo records flagged F_SNAPSHOT: the vendor's start-of-day book snapshot.
+  // Not written to krn.book_events: see `kSnapshotRuling`.
+  std::size_t   snapshotExcluded = 0;
+  std::size_t   actionNone       = 0;  // mbo action N, decoded and row-less
 };
 
 struct Report {
@@ -167,6 +233,7 @@ struct Report {
 // The two decided questions this ticket owed, in the words the SPEC gets.
 extern const char* const kSessionIdRuling;
 extern const char* const kGapsNote;
+extern const char* const kSnapshotRuling;
 
 // ---------------------------------------------------------------------------
 // D6's baseline must never be replaced by bytes the adapter refuses.

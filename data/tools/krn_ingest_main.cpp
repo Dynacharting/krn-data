@@ -7,6 +7,7 @@
 //   krn_ingest ingest  [--url U] [--data-root P] [--session-id N]
 //                      [--dbn-version V] [--no-insert] [--force-reencode]
 //   krn_ingest reload  [--url U] [--data-root P]      # ingest --from-dbn-only
+//   krn_ingest ingest  --dbn-job DIR --scratch S [--day YYYYMMDD]...  # ENC-1640
 //   krn_ingest verify  [--url U] [--symbol S]         # the D11 demonstration
 //   krn_ingest resolve-target [--url U]               # which server, no I/O
 //
@@ -61,6 +62,13 @@ void usage() {
       "  --dbn-version <v>  DBN version to emit (1..3, default 3)\n"
       "  --no-insert        ingest: do the raw half only, touch no table\n"
       "  --force-reencode   ingest: rewrite the retained DBN even if identical\n"
+      "  --dbn-job <dir>    ingest a DELIVERED vendor DBN job (metadata.json,\n"
+      "                     manifest.json, condition.json, one .dbn.zst per UTC\n"
+      "                     day); each day file is one window, and the delivered\n"
+      "                     file is the retained one (never written). `reload\n"
+      "                     --dbn-job` is the same run.\n"
+      "  --scratch <dir>    --dbn-job: where each .dbn.zst is decompressed\n"
+      "  --day <yyyymmdd>   --dbn-job: only this day file (repeatable)\n"
       "\n"
       "exit: 0 clean, 1 a finding, 2 could not run\n";
 }
@@ -74,6 +82,11 @@ struct Args {
   std::uint8_t dbnVersion = 3;
   bool noInsert = false;
   bool forceReencode = false;
+  bool dataRootSet = false;
+  bool dbnVersionSet = false;
+  std::string dbnJob;
+  std::string scratch;
+  std::vector<std::uint32_t> days;
 };
 
 // An unknown flag is FATAL rather than collected and dropped. The same defect
@@ -135,6 +148,7 @@ bool parseArgs(int argc, char** argv, Args& a) {
       a.url = next("--url");
     } else if (f == "--data-root") {
       a.dataRoot = next("--data-root");
+      a.dataRootSet = true;
     } else if (f == "--symbol") {
       a.symbol = next("--symbol");
     } else if (f == "--session-id") {
@@ -146,6 +160,13 @@ bool parseArgs(int argc, char** argv, Args& a) {
     } else if (f == "--dbn-version") {
       a.dbnVersion = static_cast<std::uint8_t>(
           num("--dbn-version", krn::data::dbn::kMinVersion, krn::data::dbn::kMaxVersion));
+      a.dbnVersionSet = true;
+    } else if (f == "--dbn-job") {
+      a.dbnJob = next("--dbn-job");
+    } else if (f == "--scratch") {
+      a.scratch = next("--scratch");
+    } else if (f == "--day") {
+      a.days.push_back(static_cast<std::uint32_t>(num("--day", 19700101u, 29991231u)));
     } else if (f == "--no-insert") {
       a.noInsert = true;
     } else if (f == "--force-reencode") {
@@ -157,6 +178,17 @@ bool parseArgs(int argc, char** argv, Args& a) {
       std::cerr << "krn_ingest: unknown flag " << f << "\n";
       return false;
     }
+  }
+  // A delivered DBN job encodes nothing and reads no CSV root, so the flags
+  // that steer those are refused rather than silently ignored.
+  if (!a.dbnJob.empty() && (a.dataRootSet || a.dbnVersionSet || a.forceReencode)) {
+    std::cerr << "krn_ingest: --dbn-job takes no --data-root, --dbn-version or "
+                 "--force-reencode (the delivered file is decoded as is)\n";
+    std::exit(kCouldNotRun);
+  }
+  if (a.dbnJob.empty() && (!a.scratch.empty() || !a.days.empty())) {
+    std::cerr << "krn_ingest: --scratch and --day need --dbn-job\n";
+    std::exit(kCouldNotRun);
   }
   return true;
 }
@@ -220,10 +252,20 @@ void printKind(const ingest::KindReport& k) {
   if (!k.jobId.empty()) std::cout << "  vendor job_id  : " << k.jobId << "\n";
   std::cout << "  symbol         : " << k.symbol << "  instrument_id "
             << k.instrumentId << "  venue " << k.venue << "\n";
+  if (!k.condition.empty()) {
+    std::cout << "  delivered      : " << k.dbnVersionNote << ", " << k.decompressedBytes
+              << " bytes decompressed into scratch (deleted after decode); "
+                 "condition.json `" << k.condition << "`\n";
+  }
   std::cout << "  session_id     : " << k.sessionId << "\n";
   if (k.csvRecords != 0) std::cout << "  csv records    : " << k.csvRecords << "\n";
   std::cout << "  dbn records    : " << k.decodedRecords << "\n";
   std::cout << "  canonical rows : " << k.canonicalRows << "\n";
+  if (k.snapshotExcluded != 0 || k.actionNone != 0) {
+    std::cout << "  not rows       : " << k.snapshotExcluded
+              << " F_SNAPSHOT record(s) excluded (see the snapshot ruling), "
+              << k.actionNone << " mbo action N\n";
+  }
   std::cout << "  rows inserted  : " << k.rowsInserted << "\n";
   std::cout << "  krn.gaps       : " << k.gapRowsWritten << " row(s) written; "
             << k.gapNaiveSeqJumps << " seq jump(s) a naive detector would have "
@@ -298,6 +340,9 @@ int cmdIngest(const Args& a, bool fromDbnOnly) {
   o.fromDbnOnly   = fromDbnOnly;
   o.noInsert      = a.noInsert;
   o.forceReencode = a.forceReencode;
+  o.dbnJobDir     = a.dbnJob;
+  o.scratchDir    = a.scratch;
+  o.days          = a.days;
 
   auto res = ingest::run(o);
   if (!res.ok()) {
@@ -335,6 +380,12 @@ int cmdIngest(const Args& a, bool fromDbnOnly) {
   std::cout << "\n=== session_id reuse — THE RULING (assigned here from ENC-1480) ===\n"
             << rep.sessionIdRuling << "\n";
   std::cout << "\n=== krn.gaps ===\n" << rep.gapsNote << "\n";
+  bool anySnapshot = false;
+  for (const auto& k : rep.kinds) anySnapshot = anySnapshot || k.snapshotExcluded != 0;
+  if (anySnapshot) {
+    std::cout << "\n=== the mbo start-of-day snapshot ===\n"
+              << ingest::kSnapshotRuling << "\n";
+  }
   return kClean;
 }
 
