@@ -27,11 +27,12 @@
 // benchmark. And no B1/B2 number — at 1000 records fixed costs dominate and a
 // rows/sec from this would be a wrong number, not a weak one (ENC-1485/1487).
 //
-// `book_snapshots` IS NOT WRITTEN, and that is a scope statement rather than
-// an omission. A snapshot is reconstructed book STATE (docs §8.5) and
-// reconstructing it is `OrderBookManager`'s job — the single implementation —
-// which this job does not drive. With a 68-second MBO window there is also no
-// session open to snapshot at.
+// `book_snapshots` HOLDS THE VENDOR'S START-OF-DAY SNAPSHOT ONLY (ENC-1663).
+// A delivered mbo day file opens with a Clear and one Add per resting order,
+// flagged F_SNAPSHOT; those records are written there, one row each, keyed to
+// the day's window, and recorded as a `book_snapshots` window. A cadence
+// snapshot reconstructed by `OrderBookManager` (docs §8.5) is still not built:
+// this job does not drive the book. See `kSnapshotRuling`.
 //
 // `gaps` IS NOT WRITTEN EITHER, and the reason is a measurement rather than
 // scope: see `Report::gapsNote` and Gaps.hpp. The job REFUSES to infer a gap
@@ -211,8 +212,12 @@ struct KindReport {
   std::string   dbnVersionNote;   // "DBN v1" etc., from the decoded metadata
   std::string   condition;        // condition.json, DBN job only
   // mbo records flagged F_SNAPSHOT: the vendor's start-of-day book snapshot.
-  // Not written to krn.book_events: see `kSnapshotRuling`.
-  std::size_t   snapshotExcluded = 0;
+  // Not written to krn.book_events; written to krn.book_snapshots, and
+  // `snapshotRowsInserted` is what was sent there. See `kSnapshotRuling`.
+  std::size_t   snapshotExcluded     = 0;
+  std::size_t   snapshotRowsInserted = 0;
+  // The instant the snapshot is as of (the records' ts_recv); 0 if none.
+  std::int64_t  snapshotAsOfNs       = 0;
   std::size_t   actionNone       = 0;  // mbo action N, decoded and row-less
 };
 
