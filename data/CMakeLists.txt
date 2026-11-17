@@ -207,9 +207,15 @@ if (KRN_DATA_BUILD_TESTS AND TARGET GTest::gtest_main)
   set(KRN_DATA_NVDA_TRADES_JOB
     "$ENV{HOME}/market-data/databento/XNAS.ITCH/NVDA/trades-dbn-XNAS-20261117-R7EH4L6T8P"
     CACHE PATH "a delivered vendor DBN trades job directory (ENC-1640)")
+  # ENC-1663: the delivered NVDA mbo job, whose day files open with the
+  # vendor's start-of-day snapshot. Same rule: a missing job FAILS the case.
+  set(KRN_DATA_NVDA_MBO_JOB
+    "$ENV{HOME}/market-data/databento/XNAS.ITCH/NVDA/mbo-dbn-XNAS-20261117-4NJAJ5R9RQ"
+    CACHE PATH "a delivered vendor DBN mbo job directory (ENC-1663)")
   target_compile_definitions(krn_data_tests PRIVATE
     KRN_DATA_SAMPLE_DIR="${KRN_DATA_SAMPLE_DIR}"
     KRN_DATA_NVDA_TRADES_JOB="${KRN_DATA_NVDA_TRADES_JOB}"
+    KRN_DATA_NVDA_MBO_JOB="${KRN_DATA_NVDA_MBO_JOB}"
     KRN_DATA_DBN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/dbn"
     KRN_TEST_SOURCE_DIR="${_kd_test_source_root}")
   krn_apply_warnings(krn_data_tests)
