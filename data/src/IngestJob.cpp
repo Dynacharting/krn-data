@@ -1454,7 +1454,7 @@ arrow::Status loadOne(const ch::Client& client, Staged& st, Report& rep) {
   };
   std::vector<TableKind> tableKinds{{st.rep.kind, st.table, true}};
   if (st.rep.kind == "book_events") {
-    // mutated: book_snapshots not dropped
+    tableKinds.push_back({"book_snapshots", "book_snapshots", !st.snapshot.empty()});
   }
 
   // ---- THE INVARIANT THE SCHEMA CANNOT ENFORCE -----------------------
